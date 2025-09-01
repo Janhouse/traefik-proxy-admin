@@ -1,0 +1,10 @@
+http:
+  routers:
+    traefik:
+      rule: "Host(`configurator.localhost`)"
+      service: "configurator"
+  services:
+    configurator:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:3000"

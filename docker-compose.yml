@@ -1,0 +1,35 @@
+services:
+
+  traefik:
+    image: "traefik"
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - "./traefik.yml:/etc/traefik/dynamic.yml:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    extra_hosts:
+          - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:16
+    container_name: traefik-share-postgres
+    environment:
+      POSTGRES_DB: traefik_share
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

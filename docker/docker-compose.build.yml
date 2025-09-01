@@ -1,0 +1,8 @@
+# Used by CI to build production image
+services:
+  traefik-configurator:
+    image: ${REPOSITORY_IMAGE:-janhouse/traefik-proxy-admin}:latest
+    build:
+      dockerfile: ./Dockerfile
+      context: ../
+    restart: 'no'
