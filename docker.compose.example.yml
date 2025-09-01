@@ -1,0 +1,70 @@
+networks:
+  traefik-configurator:
+    driver: bridge
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.212.0/24
+
+  traefik:
+    name: traefik
+    external: true
+
+services:
+  traefik-configurator:
+    container_name: "traefik-configurator"
+    image: ghcr.io/janhouse/traefik-proxy-admin:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-traefik_share}
+    networks:
+      - traefik
+      - traefik-configurator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.http.routers.traefik-configurator.tls.domains[0].main=${BASE_DOMAIN}
+      - traefik.http.routers.traefik-configurator.tls.domains[0].sans=*.${BASE_DOMAIN}
+
+      - traefik.docker.network=traefik
+      - traefik.enable=true
+      - traefik=intranet
+
+      - traefik.http.services.traefik-configurator.loadbalancer.server.port=3000
+
+      - traefik.http.routers.traefik-configurator.rule=Host(`traefik-configurator.${BASE_DOMAIN}`)
+      - traefik.http.routers.traefik-configurator.entrypoints=websecure
+      - traefik.http.routers.traefik-configurator.middlewares=security@file, base@file, auth-traefik@docker
+      - traefik.http.routers.traefik-configurator.service=traefik-configurator
+      # Route login pages
+      - traefik.http.routers.traefik-configurator-auth.rule=Host(`traefik-configurator.${BASE_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
+      - traefik.http.routers.traefik-configurator-auth.service=authentik@docker
+      - traefik.http.routers.traefik-configurator-auth.entrypoints=websecure
+
+      - "com.centurylinklabs.watchtower.enable=true"
+      #- "com.centurylinklabs.watchtower.scope=daily"
+      - "logging=promtail"
+
+  postgres:
+    image: postgres:16-alpine
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-admin}"]
+      start_period: 2s
+      # start_interval: 2s
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-traefik_share}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - traefik-configurator
+
+volumes:
+  postgres_data:
