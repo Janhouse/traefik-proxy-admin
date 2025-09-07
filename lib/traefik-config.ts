@@ -2,6 +2,7 @@ import "server-only";
 import { db, services } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { getGlobalConfig } from "./app-config";
+import { TRAEFIK_SESSION_COOKIE } from "./constants";
 
 export interface TraefikService {
   loadBalancer: {
@@ -101,7 +102,7 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
         forwardAuth: {
           address: `http://${globalConfig.adminPanelDomain}/api/auth/verify?serviceId=${service.id}`,
           trustForwardHeader: true,
-          addAuthCookiesToResponse: ["traefik-session"],
+          addAuthCookiesToResponse: [TRAEFIK_SESSION_COOKIE],
           authRequestHeaders: ["Accept", "Cookie", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Uri"],
         },
       };

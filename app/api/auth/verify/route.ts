@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { sessionManager } from "@/lib/session-manager";
 import { db, services, sharedLinks } from "@/lib/db";
 import { eq, and, gt } from "drizzle-orm";
+import { TRAEFIK_SESSION_COOKIE, COOKIE_DEFAULTS } from "@/lib/constants";
 
 export async function GET(request: NextRequest) {
   // const headersList = await headers();
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest) {
         const cookieStore = await cookies();
 
         // Check if there's already a valid session cookie
-        const existingSessionToken = cookieStore.get("traefik-session")?.value;
+        const existingSessionToken = cookieStore.get(TRAEFIK_SESSION_COOKIE)?.value;
 
         if (existingSessionToken) {
           const existingSession = await sessionManager.getSession(
@@ -67,22 +68,37 @@ export async function GET(request: NextRequest) {
           );
 
           if (existingSession && existingSession.serviceId === serviceId) {
-            // Valid session exists, just extend its expiration
-            const newExpiresAt = new Date(
-              Date.now() + sharedLink.sessionDurationMinutes * 60 * 1000
-            );
+            // Valid session exists, extend it to match service auto-disable time
+            // Calculate the proper session expiration based on service (already have service from above)
+            let newExpiresAt: Date;
+            let cookieExpiresAt: Date;
+            
+            if (service.enableDurationMinutes === null || service.enableDurationMinutes === undefined) {
+              // Infinite auto duration - session expires in 90 days
+              newExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+              cookieExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+              console.log("🔧 [DEBUG] verify route extend - infinite auto duration, session and cookie expire in 90 days:", newExpiresAt.toISOString());
+            } else {
+              // Finite auto duration - session expires when service auto-disables
+              const serviceAutoDisableAt = new Date(
+                service.enabledAt!.getTime() + service.enableDurationMinutes * 60 * 1000
+              );
+              newExpiresAt = serviceAutoDisableAt;
+              cookieExpiresAt = serviceAutoDisableAt;
+              console.log("🔧 [DEBUG] verify route extend - finite auto duration, session and cookie expire when service disables:", newExpiresAt.toISOString());
+            }
+            
             await sessionManager.extendSession(
               existingSessionToken,
               newExpiresAt
             );
 
+            console.log("🔧 [DEBUG] verify route extended session - cookie expiration:", cookieExpiresAt.toISOString());
+
             // Set the extended session cookie
-            cookieStore.set("traefik-session", existingSessionToken, {
-              httpOnly: true,
-              secure: true,
-              sameSite: "lax",
-              maxAge: sharedLink.sessionDurationMinutes * 60,
-              path: "/",
+            cookieStore.set(TRAEFIK_SESSION_COOKIE, existingSessionToken, {
+              ...COOKIE_DEFAULTS,
+              expires: cookieExpiresAt,
             });
 
             // Create clean URL without traefik-token parameter
@@ -97,26 +113,22 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // No valid session exists, create a new one
-        const sessionExpiresAt = new Date(
-          Date.now() + sharedLink.sessionDurationMinutes * 60 * 1000
-        );
+        // No valid session exists, create a new one with optimal duration
         const newSessionToken = crypto.randomUUID().replace(/-/g, "");
-        const session = await sessionManager.createSession(
+        const { session, cookieExpiresAt } = await sessionManager.createSessionWithOptimalCookieExpiry(
           serviceId,
           newSessionToken,
-          sessionExpiresAt,
+          sharedLink.sessionDurationMinutes, // This will be ignored in favor of service auto-disable time
           sharedLink.id,
           "shared-link-user"
         );
 
+        console.log("🔧 [DEBUG] verify route new session - cookie expiration:", cookieExpiresAt.toISOString());
+
         // Set the new session cookie
-        cookieStore.set("traefik-session", session.sessionToken, {
-          httpOnly: true,
-          secure: true,
-          sameSite: "lax",
-          maxAge: sharedLink.sessionDurationMinutes * 60,
-          path: "/",
+        cookieStore.set(TRAEFIK_SESSION_COOKIE, session.sessionToken, {
+          ...COOKIE_DEFAULTS,
+          expires: cookieExpiresAt,
         });
 
         // Create clean URL without traefik-token parameter
@@ -133,7 +145,7 @@ export async function GET(request: NextRequest) {
 
     // Check for session cookie
     const cookieStore = await cookies();
-    const sessionToken = cookieStore.get("traefik-session")?.value;
+    const sessionToken = cookieStore.get(TRAEFIK_SESSION_COOKIE)?.value;
 
     if (!sessionToken) {
       return NextResponse.json({ error: "No session found" }, { status: 401 });

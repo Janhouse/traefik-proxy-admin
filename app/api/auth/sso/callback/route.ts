@@ -4,6 +4,7 @@ import { sessionManager } from "@/lib/session-manager";
 import { db, services } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
+import { TRAEFIK_SESSION_COOKIE, COOKIE_DEFAULTS } from "@/lib/constants";
 
 export async function GET(request: NextRequest) {
   try {
@@ -56,26 +57,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    // Create session
+    // Create session with optimal cookie expiry
     const sessionToken = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
-
-    await sessionManager.createSession(
+    const sessionDurationHours = 8; // Default SSO session duration
+    const { session, cookieExpiresAt } = await sessionManager.createSessionWithOptimalCookieExpiry(
       serviceId,
       sessionToken,
-      expiresAt,
+      sessionDurationHours * 60, // Convert to minutes
       undefined,
       userInfo.sub
     );
 
+    console.log("🔧 [DEBUG] SSO callback - cookie expiration:", cookieExpiresAt.toISOString());
+    console.log("🔧 [DEBUG] SSO callback - session expiration:", session.expiresAt.toISOString());
+
     // Set session cookie and redirect
     const response = NextResponse.redirect(`${request.nextUrl.origin}/auth/success`);
     
-    response.cookies.set("traefik-session", sessionToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      expires: expiresAt,
+    response.cookies.set(TRAEFIK_SESSION_COOKIE, sessionToken, {
+      ...COOKIE_DEFAULTS,
+      expires: cookieExpiresAt,
     });
 
     // Clear SSO state cookies

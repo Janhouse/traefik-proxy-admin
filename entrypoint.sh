@@ -1,5 +1,9 @@
 #!/bin/sh
 
+if [ -f "/app/.next/BUILD_ID" ]; then
+    echo "Traefik Configurator version: $(cat /app/.next/BUILD_ID)"
+fi
+
 echo "Running migration files"
 for f in drizzle/*.sql;
 do

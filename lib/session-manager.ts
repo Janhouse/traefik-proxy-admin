@@ -1,4 +1,4 @@
-import { db, sessions, Session } from "@/lib/db";
+import { db, sessions, services, Session } from "@/lib/db";
 import { eq, gt, lt } from "drizzle-orm";
 
 class SessionManager {
@@ -133,6 +133,120 @@ class SessionManager {
     return Array.from(this.memoryCache.values()).filter(
       session => session.serviceId === serviceId
     );
+  }
+
+  async createSessionWithOptimalCookieExpiry(
+    serviceId: string,
+    sessionToken: string,
+    sessionDurationMinutes: number,
+    sharedLinkId?: string,
+    userIdentifier?: string
+  ): Promise<{ session: Session; cookieExpiresAt: Date }> {
+    console.log("🔧 [DEBUG] createSessionWithOptimalCookieExpiry called with:", {
+      serviceId,
+      sessionDurationMinutes,
+      sharedLinkId,
+      userIdentifier
+    });
+
+    // Get service details to determine auto duration
+    const [service] = await db
+      .select()
+      .from(services)
+      .where(eq(services.id, serviceId));
+    
+    if (!service) {
+      console.error("🔧 [DEBUG] Service not found for ID:", serviceId);
+      throw new Error("Service not found");
+    }
+
+    console.log("🔧 [DEBUG] Service details:", {
+      id: service.id,
+      name: service.name,
+      enableDurationMinutes: service.enableDurationMinutes,
+      enabledAt: service.enabledAt?.toISOString()
+    });
+
+    // Calculate session expiration based on service auto-disable time
+    let sessionExpiresAt: Date;
+    let cookieExpiresAt: Date;
+    
+    if (service.enableDurationMinutes === null || service.enableDurationMinutes === undefined) {
+      // Infinite auto duration - session and cookie last 90 days
+      sessionExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      cookieExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      console.log("🔧 [DEBUG] Infinite auto duration - session and cookie expire in 90 days:", sessionExpiresAt.toISOString());
+    } else {
+      // Finite auto duration - session and cookie expire when service auto-disables
+      const serviceAutoDisableAt = new Date(
+        service.enabledAt!.getTime() + service.enableDurationMinutes * 60 * 1000
+      );
+      sessionExpiresAt = serviceAutoDisableAt;
+      cookieExpiresAt = serviceAutoDisableAt;
+      console.log("🔧 [DEBUG] Service auto-disable at:", serviceAutoDisableAt.toISOString());
+      console.log("🔧 [DEBUG] Session and cookie expire when service disables:", sessionExpiresAt.toISOString());
+    }
+
+    // Create the session with the calculated expiration
+    const session = await this.createSession(
+      serviceId,
+      sessionToken,
+      sessionExpiresAt,
+      sharedLinkId,
+      userIdentifier
+    );
+
+    console.log("🔧 [DEBUG] Final session expiration:", session.expiresAt.toISOString());
+    console.log("🔧 [DEBUG] Final cookie expiration:", cookieExpiresAt.toISOString());
+    return { session, cookieExpiresAt };
+  }
+
+  async calculateOptimalCookieExpiry(
+    serviceId: string,
+    sessionExpiresAt: Date
+  ): Promise<Date> {
+    console.log("🔧 [DEBUG] calculateOptimalCookieExpiry called with:", {
+      serviceId,
+      sessionExpiresAt: sessionExpiresAt.toISOString()
+    });
+
+    // Get service details to determine auto duration
+    const [service] = await db
+      .select()
+      .from(services)
+      .where(eq(services.id, serviceId));
+    
+    if (!service) {
+      console.error("🔧 [DEBUG] Service not found for ID:", serviceId);
+      return sessionExpiresAt; // Fallback to session expiration
+    }
+
+    console.log("🔧 [DEBUG] Service details:", {
+      id: service.id,
+      name: service.name,
+      enableDurationMinutes: service.enableDurationMinutes,
+      enabledAt: service.enabledAt?.toISOString()
+    });
+
+    let cookieExpiresAt: Date;
+    if (service.enableDurationMinutes === null || service.enableDurationMinutes === undefined) {
+      // Infinite auto duration - set cookie to 90 days for security
+      cookieExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      console.log("🔧 [DEBUG] Infinite auto duration - cookie expires in 90 days:", cookieExpiresAt.toISOString());
+    } else {
+      // Finite auto duration - set cookie to when service will be auto-disabled
+      const serviceAutoDisableAt = new Date(
+        service.enabledAt!.getTime() + service.enableDurationMinutes * 60 * 1000
+      );
+      console.log("🔧 [DEBUG] Service auto-disable at:", serviceAutoDisableAt.toISOString());
+      
+      // Use service auto-disable time - cookie should last until service is disabled
+      cookieExpiresAt = serviceAutoDisableAt;
+      console.log("🔧 [DEBUG] Using service auto-disable time - cookie expires at:", cookieExpiresAt.toISOString());
+    }
+
+    console.log("🔧 [DEBUG] Final optimal cookie expiration:", cookieExpiresAt.toISOString());
+    return cookieExpiresAt;
   }
 }
 

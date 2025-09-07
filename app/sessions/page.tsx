@@ -8,6 +8,7 @@ import { Trash2, RefreshCw, ArrowLeft, Users, Clock, User } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CountdownTimer } from "@/components/countdown-timer";
 
 interface SessionInfo {
   id: string;
@@ -24,6 +25,7 @@ interface SessionInfo {
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expiredSessions, setExpiredSessions] = useState<Set<string>>(new Set());
 
   const fetchSessions = async () => {
     try {
@@ -41,6 +43,11 @@ export default function SessionsPage() {
 
   useEffect(() => {
     fetchSessions();
+    
+    // Auto-refresh sessions every 30 seconds
+    const refreshInterval = setInterval(fetchSessions, 30000);
+    
+    return () => clearInterval(refreshInterval);
   }, []);
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -73,6 +80,10 @@ export default function SessionsPage() {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
+  };
+
+  const handleSessionExpired = (sessionId: string) => {
+    setExpiredSessions(prev => new Set([...prev, sessionId]));
   };
 
   const getTimeRemaining = (expiresAt: string) => {
@@ -179,20 +190,23 @@ export default function SessionsPage() {
               </div>
             ) : (
               <div className="divide-y">
-                {sessions.map((session) => (
-                  <div key={session.id} className="p-6">
+                {sessions.map((session) => {
+                  const isExpired = expiredSessions.has(session.id);
+                  return (
+                  <div 
+                    key={session.id} 
+                    className={`p-6 ${isExpired ? 'opacity-50 bg-muted/50' : ''}`}
+                  >
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <h3 className="font-medium">
                             {session.serviceName || "Unknown Service"}
                           </h3>
-                          <Badge 
-                            variant={getTimeRemaining(session.expiresAt) === "Expired" ? "destructive" : "default"}
-                          >
-                            <Clock className="mr-1 h-3 w-3" />
-                            {getTimeRemaining(session.expiresAt)}
-                          </Badge>
+                          <CountdownTimer 
+                            expiresAt={session.expiresAt}
+                            onExpired={() => handleSessionExpired(session.id)}
+                          />
                         </div>
                         <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-2 lg:grid-cols-4">
                           <div className="flex items-center gap-1">
@@ -233,7 +247,8 @@ export default function SessionsPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

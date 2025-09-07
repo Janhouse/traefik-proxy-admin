@@ -23,6 +23,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const buildId = process.env.BUILD_ID
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -35,6 +36,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
+          <div className="text-muted-foreground">Version: {buildId}</div>
         </ThemeProvider>
       </body>
     </html>
