@@ -2,6 +2,16 @@ name: Build and push container to registry
 run-name: ${{ gitea.actor }} is building project 🚀
 on:
   workflow_dispatch:
+    inputs:
+      push_to_github:
+        description: 'Also push to GitHub Container Registry'
+        required: false
+        default: false
+        type: boolean
+      custom_tag:
+        description: 'Custom tag for the image (optional)'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -13,13 +23,51 @@ jobs:
         env:
           REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
         run: docker compose -f docker/docker-compose.build.yml build traefik-configurator
-      - name: Login to GitHub Container Registry
+      - name: Login to Gitea Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ vars.REGISTRY_URL }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
-      - name: Push image
+      - name: Push image to Gitea Container Registry
         env:
           REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
         run: docker compose -f docker/docker-compose.build.yml push traefik-configurator
+      - name: Login to GitHub Container Registry
+        if: ${{ github.event.inputs.push_to_github == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_ACCESS_TOKEN }}
+      - name: Tag and push to GitHub Container Registry
+        if: ${{ github.event.inputs.push_to_github == 'true' }}
+        env:
+          REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
+          REPOSITORY_IMAGE_PUBLIC: ${{ vars.REPOSITORY_IMAGE_PUBLIC }}
+        run: |
+          # Get the image name from the built image
+          SOURCE_IMAGE="${REPOSITORY_IMAGE}"
+          TARGET_IMAGE="${REPOSITORY_IMAGE_PUBLIC}"
+          
+          # Tag the image for GitHub
+          docker tag "${SOURCE_IMAGE}" "${TARGET_IMAGE}"
+          
+          # Push to GitHub
+          docker push "${TARGET_IMAGE}"
+      - name: Tag and push custom tag to GitHub Container Registry
+        if: ${{ github.event.inputs.push_to_github == 'true' && github.event.inputs.custom_tag != '' }}
+        env:
+          REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
+          REPOSITORY_IMAGE_PUBLIC: ${{ vars.REPOSITORY_IMAGE_PUBLIC }}
+          CUSTOM_TAG: ${{ github.event.inputs.custom_tag }}
+        run: |
+          # Get the base image name from REPOSITORY_IMAGE_PUBLIC (remove any existing tag)
+          BASE_IMAGE=$(echo "${REPOSITORY_IMAGE_PUBLIC}" | cut -d':' -f1)
+          
+          # Tag with custom tag
+          CUSTOM_TARGET="${BASE_IMAGE}:${CUSTOM_TAG}"
+          docker tag "${REPOSITORY_IMAGE}" "${CUSTOM_TARGET}"
+          
+          # Push custom tagged image
+          docker push "${CUSTOM_TARGET}"
