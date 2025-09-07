@@ -17,5 +17,9 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
+  "registries":{
+    "@originui": "https://originui.com/rregistry/{name}.json",
+    "@aceternity": "https://ui.aceternity.com/registry/{name}.json"
+  },
   "iconLibrary": "lucide"
 }

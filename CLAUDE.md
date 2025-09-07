@@ -157,3 +157,5 @@ providers:
 ```
 
 This configures Traefik to poll the admin panel for dynamic configuration updates.
+
+Project uses pnpm instead of npm

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Clock } from "lucide-react";
+import { Clock, Infinity } from "lucide-react";
 import { formatDurationRemaining } from "@/lib/duration-utils";
 
 interface ServiceCountdownProps {
@@ -13,6 +13,7 @@ interface ServiceCountdownProps {
 
 export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpired }: ServiceCountdownProps) {
   const [timeLeft, setTimeLeft] = useState<string>("");
+  const [disableTime, setDisableTime] = useState<string>("");
 
   useEffect(() => {
     if (!enabled || !enabledAt) {
@@ -27,6 +28,15 @@ export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpire
       const remaining = formatDurationRemaining(enabledAt, durationMinutes);
       console.log("ServiceCountdown - remaining:", remaining);
       setTimeLeft(remaining || "");
+      
+      // Calculate the exact disable time for tooltip
+      if (durationMinutes !== null && durationMinutes !== undefined) {
+        const enableTime = new Date(enabledAt);
+        const disableAt = new Date(enableTime.getTime() + durationMinutes * 60 * 1000);
+        setDisableTime(disableAt.toLocaleString());
+      } else {
+        setDisableTime("");
+      }
       
       // If the countdown reached "Expired", trigger the callback
       if (remaining === "Expired" && onExpired) {
@@ -47,11 +57,24 @@ export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpire
     return null;
   }
 
+  const isForever = timeLeft === "Forever";
+  
   return (
-    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-      <Clock className="h-3 w-3" />
+    <div 
+      className={`flex items-center gap-1 text-xs ${
+        isForever 
+          ? "text-green-600 dark:text-green-400 font-medium" 
+          : "text-muted-foreground"
+      }`}
+      title={!isForever && disableTime ? `Service will be disabled on: ${disableTime}` : undefined}
+    >
+      {isForever ? (
+        <Infinity className="h-3 w-3" />
+      ) : (
+        <Clock className="h-3 w-3" />
+      )}
       <span>
-        {timeLeft === "Forever" ? "Enabled forever" : `Auto-disable in: ${timeLeft}`}
+        {isForever ? "Enabled forever" : `Auto-disable in: ${timeLeft}`}
       </span>
     </div>
   );

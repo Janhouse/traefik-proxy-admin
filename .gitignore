@@ -44,3 +44,5 @@ yarn-error.log*
 next-env.d.ts
 
 .claude/*.local.json
+.claude/agents
+mcp.json
