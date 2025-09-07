@@ -15,7 +15,6 @@ COPY . .
 
 RUN mkdir -p /app/public
 
-RUN env
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm && \
     pnpm build
