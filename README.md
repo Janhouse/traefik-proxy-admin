@@ -1,6 +1,8 @@
 # Traefik Dynamic Proxy Admin Panel
 
-A comprehensive admin panel for managing Traefik dynamic configurations with authentication support including shared links and SSO integration.
+Admin panel for managing Traefik dynamic configurations with authentication support, including shared links and SSO integration.
+
+Can be used standalone but built in mind with Headscale and other VPN to expose internally hosted servcices to the outside world. Enabling functionality in some ways **similar to Tailscale Funnel but for Headscale**. Inspired by the approach of Pangolin.
 
 ## Features
 
@@ -13,6 +15,13 @@ A comprehensive admin panel for managing Traefik dynamic configurations with aut
 - **Session Management**: Memory-cached sessions with admin oversight
 - **Real-time Updates**: Live configuration updates for Traefik
 - **Modern UI**: Built with Next.js 15, TypeScript, and shadcn/ui
+
+## Screenshots
+
+![screenshot1](docs/screenshots/screenshot1.png "Service list")
+![screenshot3](docs/screenshots/screenshot4.png "Session management")
+![screenshot2](docs/screenshots/screenshot2.png "Global configuration")
+![screenshot3](docs/screenshots/screenshot3.png "Service configuration")
 
 ## Architecture
 
