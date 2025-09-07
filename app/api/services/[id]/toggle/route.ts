@@ -33,15 +33,11 @@ export async function POST(
     if (newEnabledState) {
       updateData.enabledAt = new Date();
       
-      // Use provided duration, or fall back to service's current duration, or global default
+      // Use provided duration, or keep the service's existing duration (including null for infinite)
       if (durationMinutes !== undefined) {
         updateData.enableDurationMinutes = durationMinutes;
-      } else if (service.enableDurationMinutes === null || service.enableDurationMinutes === undefined) {
-        // Get global default if service doesn't have a duration set
-        const globalConfig = await getGlobalConfig();
-        updateData.enableDurationMinutes = globalConfig.defaultEnableDurationMinutes;
       }
-      // Otherwise keep the existing service duration
+      // Otherwise keep the existing service duration (null = infinite, number = finite)
     }
 
     // Update the service
