@@ -16,6 +16,7 @@ export async function PUT(
       targetIp: body.targetIp,
       targetPort: body.targetPort,
       isHttps: body.isHttps,
+      insecureSkipVerify: body.insecureSkipVerify,
       enabled: body.enabled,
       middlewares: body.middlewares,
       requestHeaders: body.requestHeaders,

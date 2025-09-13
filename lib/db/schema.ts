@@ -24,6 +24,7 @@ export const services = pgTable("services", {
   targetIp: varchar("target_ip", { length: 45 }).notNull(),
   targetPort: integer("target_port").notNull(),
   isHttps: boolean("is_https").default(false).notNull(),
+  insecureSkipVerify: boolean("insecure_skip_verify").default(false).notNull(), // Skip TLS certificate validation for target service
   enabled: boolean("enabled").default(true).notNull(),
   enabledAt: timestamp("enabled_at").defaultNow(),
   enableDurationMinutes: integer("enable_duration_minutes"), // null = forever, number = minutes until auto-disable

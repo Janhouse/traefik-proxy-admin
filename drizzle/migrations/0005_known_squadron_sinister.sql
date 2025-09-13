@@ -1,0 +1,1 @@
+ALTER TABLE "services" ADD COLUMN "insecure_skip_verify" boolean DEFAULT false NOT NULL;

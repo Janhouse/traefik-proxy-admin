@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ServiceFormData } from "./use-service-form";
 
 interface UseServiceHeadersOptions {
@@ -10,11 +10,13 @@ export function useServiceHeaders({ formData, updateFormData }: UseServiceHeader
   const [middlewareText, setMiddlewareText] = useState("");
   const [hostHeader, setHostHeader] = useState("");
 
-  // Initialize middleware and headers from form data
+  // Initialize middleware text from form data
   useEffect(() => {
     setMiddlewareText(formData.middlewares || "");
+  }, [formData.middlewares]);
 
-    // Parse existing request headers to extract Host header
+  // Initialize host header from form data
+  useEffect(() => {
     let existingHostHeader = "";
     if (formData.requestHeaders) {
       try {
@@ -25,7 +27,7 @@ export function useServiceHeaders({ formData, updateFormData }: UseServiceHeader
       }
     }
     setHostHeader(existingHostHeader);
-  }, [formData.middlewares, formData.requestHeaders]);
+  }, [formData.requestHeaders]);
 
   // Update middlewares when text changes
   useEffect(() => {
@@ -38,24 +40,30 @@ export function useServiceHeaders({ formData, updateFormData }: UseServiceHeader
     updateFormData({ middlewares: processedMiddlewares });
   }, [middlewareText, updateFormData]);
 
-  // Update request headers when Host header changes
-  useEffect(() => {
+  // Update request headers when Host header changes (user input only)
+  const updateRequestHeaders = (newHostHeader: string) => {
     const headers: Record<string, string> = {};
 
     // Add Host header if provided
-    if (hostHeader.trim()) {
-      headers.Host = hostHeader.trim();
+    if (newHostHeader.trim()) {
+      headers.Host = newHostHeader.trim();
     }
 
     // Convert to JSON string
     const headersJson = Object.keys(headers).length > 0 ? JSON.stringify(headers) : "";
     updateFormData({ requestHeaders: headersJson });
-  }, [hostHeader, updateFormData]);
+  };
+
+  // Custom setter that updates both state and form data
+  const setHostHeaderValue = (value: string) => {
+    setHostHeader(value);
+    updateRequestHeaders(value);
+  };
 
   return {
     middlewareText,
     setMiddlewareText,
     hostHeader,
-    setHostHeader,
+    setHostHeader: setHostHeaderValue,
   };
 }

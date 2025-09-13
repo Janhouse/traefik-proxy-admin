@@ -12,6 +12,7 @@ export interface TraefikService {
     servers: Array<{
       url: string;
     }>;
+    serversTransport?: string;
   };
 }
 
@@ -63,6 +64,9 @@ export interface TraefikConfig {
     services: Record<string, TraefikService>;
     routers: Record<string, TraefikRouter>;
     middlewares?: Record<string, TraefikMiddleware>;
+    serversTransports?: Record<string, {
+      insecureSkipVerify?: boolean;
+    }>;
   };
 }
 
@@ -188,7 +192,7 @@ async function createTraefikService(
   const protocol = service.isHttps ? "https" : "http";
 
   // Service configuration
-  config.http.services[serviceName] = {
+  const serviceConfig: TraefikService = {
     loadBalancer: {
       servers: [
         {
@@ -197,6 +201,24 @@ async function createTraefikService(
       ],
     },
   };
+
+  // Add serversTransport if insecureSkipVerify is enabled for HTTPS services
+  if (service.isHttps && service.insecureSkipVerify) {
+    const transportName = `insecure-transport-${service.subdomain}`;
+    serviceConfig.loadBalancer.serversTransport = transportName;
+
+    // Ensure serversTransports object exists
+    if (!config.http.serversTransports) {
+      config.http.serversTransports = {};
+    }
+
+    // Add the serversTransport configuration
+    config.http.serversTransports[transportName] = {
+      insecureSkipVerify: true,
+    };
+  }
+
+  config.http.services[serviceName] = serviceConfig;
 
   // Build middlewares
   const middlewares = await buildServiceMiddlewares(service, globalConfig, config);

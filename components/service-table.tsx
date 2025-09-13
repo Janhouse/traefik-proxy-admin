@@ -29,6 +29,7 @@ export interface Service {
   targetIp: string;
   targetPort: number;
   isHttps: boolean;
+  insecureSkipVerify: boolean;
   enabled: boolean;
   enabledAt?: string | null;
   enableDurationMinutes?: number | null;

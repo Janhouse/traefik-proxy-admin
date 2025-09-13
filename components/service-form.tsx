@@ -41,6 +41,7 @@ export function ServiceForm({
     updateFormData,
   });
 
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -155,6 +156,23 @@ export function ServiceForm({
                 />
                 <Label htmlFor="isHttps">Target uses HTTPS</Label>
               </div>
+
+              {formData.isHttps && (
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="insecureSkipVerify"
+                    checked={formData.insecureSkipVerify}
+                    onCheckedChange={(checked) => updateFormData({ insecureSkipVerify: checked })}
+                    disabled={submitting}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="insecureSkipVerify">Skip TLS Certificate Validation</Label>
+                    <p className="text-xs text-gray-500">
+                      Enable for services with self-signed or invalid certificates
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center space-x-2">
                 <Switch

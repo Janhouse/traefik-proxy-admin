@@ -36,6 +36,13 @@
       "when": 1757792238873,
       "tag": "0004_nasty_fabian_cortez",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1757798480879,
+      "tag": "0005_known_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
       targetIp: body.targetIp,
       targetPort: body.targetPort,
       isHttps: body.isHttps || false,
+      insecureSkipVerify: body.insecureSkipVerify || false,
       enabled: body.enabled !== undefined ? body.enabled : true,
       enabledAt: (body.enabled !== false) ? new Date() : undefined, // Set enabledAt if service is enabled
       enableDurationMinutes: body.enableDurationMinutes,
