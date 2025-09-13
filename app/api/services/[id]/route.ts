@@ -10,7 +10,7 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
 
-    const updateData: any = {
+    const updateData = {
       name: body.name,
       subdomain: body.subdomain,
       targetIp: body.targetIp,
@@ -21,7 +21,7 @@ export async function PUT(
       requestHeaders: body.requestHeaders,
       enableDurationMinutes: body.enableDurationMinutes,
       updatedAt: new Date(),
-    };
+    } as Record<string, unknown>;
 
     // If enabling the service, set enabledAt
     if (body.enabled) {

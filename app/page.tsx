@@ -10,9 +10,6 @@ import {
   Copy,
   ArrowLeft,
   Settings,
-  Shield,
-  Users,
-  Database,
   Menu,
   X
 } from "lucide-react";

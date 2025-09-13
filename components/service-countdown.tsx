@@ -50,7 +50,7 @@ export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpire
       const interval = setInterval(updateCountdown, 1000);
       return () => clearInterval(interval);
     }
-  }, [enabledAt, enabled, durationMinutes, onExpired]);
+  }, [enabledAt, enabled, durationMinutes, onExpired, hasExpired]);
 
   if (!enabled || !enabledAt || !timeLeft) {
     return null;

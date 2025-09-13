@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, services } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { getGlobalConfig } from "@/lib/app-config";
 
 export async function POST(
   request: NextRequest,
@@ -24,10 +23,10 @@ export async function POST(
 
     // Toggle enabled status
     const newEnabledState = !service.enabled;
-    const updateData: any = {
+    const updateData = {
       enabled: newEnabledState,
       updatedAt: new Date(),
-    };
+    } as Record<string, unknown>;
 
     // If enabling the service, set enabledAt and duration
     if (newEnabledState) {

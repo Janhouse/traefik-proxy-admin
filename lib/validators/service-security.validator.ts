@@ -69,7 +69,7 @@ export function validateUpdateServiceSecurityConfig(data: unknown): ValidationRe
   return { isValid: errors.length === 0, errors };
 }
 
-function validateSecurityTypeConfig(securityType: SecurityType, config: Record<string, any>): string[] {
+function validateSecurityTypeConfig(securityType: SecurityType, config: Record<string, unknown>): string[] {
   const errors: string[] = [];
 
   switch (securityType) {
@@ -90,14 +90,14 @@ function validateSecurityTypeConfig(securityType: SecurityType, config: Record<s
       if (config.groups !== undefined) {
         if (!Array.isArray(config.groups)) {
           errors.push("groups must be an array");
-        } else if (!config.groups.every((group: any) => typeof group === "string")) {
+        } else if (!config.groups.every((group: unknown) => typeof group === "string")) {
           errors.push("all groups must be strings");
         }
       }
       if (config.users !== undefined) {
         if (!Array.isArray(config.users)) {
           errors.push("users must be an array");
-        } else if (!config.users.every((user: any) => typeof user === "string")) {
+        } else if (!config.users.every((user: unknown) => typeof user === "string")) {
           errors.push("all users must be strings");
         }
       }

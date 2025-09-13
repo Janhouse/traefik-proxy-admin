@@ -43,18 +43,18 @@ export interface CreateServiceSecurityConfigRequest {
   securityType: SecurityType;
   isEnabled?: boolean;
   priority?: number;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 export interface UpdateServiceSecurityConfigRequest {
   isEnabled?: boolean;
   priority?: number;
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
 }
 
 // Response DTOs
 export interface ServiceSecurityConfigResponse extends ServiceSecurityConfig {
-  parsedConfig: Record<string, any>;
+  parsedConfig: Record<string, unknown>;
 }
 
 export interface ServiceWithSecurityResponse {

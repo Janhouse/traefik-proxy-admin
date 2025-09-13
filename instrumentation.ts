@@ -1,10 +1,13 @@
+import { readFileSync } from "fs";
+
 function getBuildId() {
   try {
-    return require("fs").readFileSync("./.next/BUILD_ID", "utf8").trim();
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+    return readFileSync("./.next/BUILD_ID", "utf8").trim();
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
       return "development";
     }
+    return "development";
   }
 }
 

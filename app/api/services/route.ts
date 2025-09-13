@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, services, serviceSecurityConfigs, NewService } from "@/lib/db";
 import { checkAndDisableExpiredServices } from "@/lib/service-scheduler";
-import { eq, sql, count } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import "@/lib/startup"; // Initialize background services
 
 export async function GET() {

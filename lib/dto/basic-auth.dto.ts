@@ -26,6 +26,7 @@ export interface BasicAuthConfigResponse extends BasicAuthConfig {
   users?: BasicAuthUserResponse[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface BasicAuthUserResponse extends Omit<BasicAuthUser, "passwordHash"> {
   // Exclude password hash for security
 }

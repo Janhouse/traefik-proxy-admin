@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { X, Save, AlertCircle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -74,7 +73,7 @@ export function ServiceForm({
         try {
           const headers = JSON.parse(service.requestHeaders);
           existingHostHeader = headers.Host || "";
-        } catch (e) {
+        } catch {
           // If parsing fails, treat as empty
         }
       }
