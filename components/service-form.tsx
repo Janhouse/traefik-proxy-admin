@@ -1,18 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
+import { DurationSelect } from "@/components/duration-select";
 import { X, Save, AlertCircle } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DURATION_PRESETS } from "@/lib/duration-presets";
+import { useServiceForm, type ServiceFormData } from "@/hooks/use-service-form";
+import { useServiceHeaders } from "@/hooks/use-service-headers";
 import type { Service } from "./service-table";
-
-type ServiceFormData = Omit<Service, "id" | "createdAt" | "updatedAt">;
 
 interface ServiceFormProps {
   service: Service | null;
@@ -29,107 +28,18 @@ export function ServiceForm({
   onSubmit,
   onCancel,
 }: ServiceFormProps) {
-  // Create defaultFormData as a memoized callback to ensure it uses current defaultDuration
-  const getDefaultFormData = useCallback((): ServiceFormData => ({
-    name: "",
-    subdomain: "",
-    targetIp: "",
-    targetPort: 80,
-    isHttps: true,
-    enabled: true,
-    enabledAt: null,
-    enableDurationMinutes: defaultDuration ?? null,
-    middlewares: "",
-    requestHeaders: "",
-  }), [defaultDuration]);
-
-  const [formData, setFormData] = useState<ServiceFormData>(getDefaultFormData);
-  const [originalFormData, setOriginalFormData] = useState<ServiceFormData>(getDefaultFormData);
-  const [middlewareText, setMiddlewareText] = useState("");
-  const [hostHeader, setHostHeader] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Initialize form when service prop changes
-  useEffect(() => {
-    if (service) {
-      const serviceData: ServiceFormData = {
-        name: service.name,
-        subdomain: service.subdomain,
-        targetIp: service.targetIp,
-        targetPort: service.targetPort,
-        isHttps: service.isHttps,
-        enabled: service.enabled,
-        enabledAt: service.enabledAt,
-        enableDurationMinutes: service.enableDurationMinutes,
-        middlewares: service.middlewares || "",
-        requestHeaders: service.requestHeaders || "",
-      };
-      setFormData(serviceData);
-      setOriginalFormData(serviceData);
-      setMiddlewareText(service.middlewares || "");
+  // Use custom hooks for form management
+  const { formData, updateFormData, hasUnsavedChanges } = useServiceForm({
+    service,
+    defaultDuration,
+  });
 
-      // Parse existing request headers to extract Host header
-      let existingHostHeader = "";
-      if (service.requestHeaders) {
-        try {
-          const headers = JSON.parse(service.requestHeaders);
-          existingHostHeader = headers.Host || "";
-        } catch {
-          // If parsing fails, treat as empty
-        }
-      }
-      setHostHeader(existingHostHeader);
-    } else {
-      const defaultData = getDefaultFormData();
-      setFormData(defaultData);
-      setOriginalFormData(defaultData);
-      setMiddlewareText("");
-      setHostHeader("");
-    }
-  }, [service, defaultDuration]);
-
-  // Update form data when defaultDuration changes and we're adding a new service
-  useEffect(() => {
-    if (!service && defaultDuration !== undefined) {
-      const defaultData = getDefaultFormData();
-      setFormData(defaultData);
-      setOriginalFormData(defaultData);
-    }
-  }, [defaultDuration, service, getDefaultFormData]);
-
-  // Update middlewares when text changes
-  useEffect(() => {
-    const processedMiddlewares = middlewareText
-      .split(",")
-      .map(m => m.trim())
-      .filter(m => m.length > 0)
-      .join(",");
-
-    setFormData(prev => ({
-      ...prev,
-      middlewares: processedMiddlewares
-    }));
-  }, [middlewareText]);
-
-  // Update request headers when Host header changes
-  useEffect(() => {
-    const headers: Record<string, string> = {};
-
-    // Add Host header if provided
-    if (hostHeader.trim()) {
-      headers.Host = hostHeader.trim();
-    }
-
-    // Convert to JSON string
-    const headersJson = Object.keys(headers).length > 0 ? JSON.stringify(headers) : "";
-
-    setFormData(prev => ({
-      ...prev,
-      requestHeaders: headersJson
-    }));
-  }, [hostHeader]);
-
-  const hasUnsavedChanges = JSON.stringify(formData) !== JSON.stringify(originalFormData);
+  const { middlewareText, setMiddlewareText, hostHeader, setHostHeader } = useServiceHeaders({
+    formData,
+    updateFormData,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,7 +97,7 @@ export function ServiceForm({
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => updateFormData({ name: e.target.value })}
                   placeholder="My Service"
                   required
                   disabled={submitting}
@@ -200,7 +110,7 @@ export function ServiceForm({
                   <Input
                     id="subdomain"
                     value={formData.subdomain}
-                    onChange={(e) => setFormData({ ...formData, subdomain: e.target.value })}
+                    onChange={(e) => updateFormData({ subdomain: e.target.value })}
                     placeholder="myservice"
                     required
                     disabled={submitting}
@@ -214,7 +124,7 @@ export function ServiceForm({
                 <Input
                   id="targetIp"
                   value={formData.targetIp}
-                  onChange={(e) => setFormData({ ...formData, targetIp: e.target.value })}
+                  onChange={(e) => updateFormData({ targetIp: e.target.value })}
                   placeholder="192.168.1.100"
                   required
                   disabled={submitting}
@@ -227,7 +137,7 @@ export function ServiceForm({
                   id="targetPort"
                   type="number"
                   value={formData.targetPort}
-                  onChange={(e) => setFormData({ ...formData, targetPort: parseInt(e.target.value) || 80 })}
+                  onChange={(e) => updateFormData({ targetPort: parseInt(e.target.value) || 80 })}
                   placeholder="80"
                   required
                   disabled={submitting}
@@ -240,7 +150,7 @@ export function ServiceForm({
                 <Switch
                   id="isHttps"
                   checked={formData.isHttps}
-                  onCheckedChange={(checked) => setFormData({ ...formData, isHttps: checked })}
+                  onCheckedChange={(checked) => updateFormData({ isHttps: checked })}
                   disabled={submitting}
                 />
                 <Label htmlFor="isHttps">Target uses HTTPS</Label>
@@ -250,50 +160,17 @@ export function ServiceForm({
                 <Switch
                   id="enabled"
                   checked={formData.enabled}
-                  onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
+                  onCheckedChange={(checked) => updateFormData({ enabled: checked })}
                   disabled={submitting}
                 />
                 <Label htmlFor="enabled">Enable service</Label>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="duration">Auto-disable Duration</Label>
-                <Select
-                  value={formData.enableDurationMinutes === null || isNaN(formData.enableDurationMinutes as number)
-                    ? "forever"
-                    : formData.enableDurationMinutes?.toString() || "forever"}
-                  onValueChange={(value) => {
-                    // Ignore empty string changes - this seems to be a spurious event from the Select component
-                    if (value === "") {
-                      return;
-                    }
-
-                    let duration: number | null;
-                    if (value === "forever") {
-                      duration = null;
-                    } else {
-                      const parsed = parseInt(value);
-                      duration = isNaN(parsed) ? null : parsed;
-                    }
-                    setFormData({ ...formData, enableDurationMinutes: duration });
-                  }}
-                  disabled={submitting}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select duration" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DURATION_PRESETS.map((preset) => (
-                      <SelectItem key={preset.value === null ? "forever" : preset.value.toString()} value={preset.value === null ? "forever" : preset.value.toString()}>
-                        {preset.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500">
-                  Service will automatically disable after this duration.
-                </p>
-              </div>
+              <DurationSelect
+                value={formData.enableDurationMinutes}
+                onValueChange={(duration) => updateFormData({ enableDurationMinutes: duration })}
+                disabled={submitting}
+              />
 
               <div className="space-y-2">
                 <Label htmlFor="middlewares">Middlewares (comma-separated)</Label>
