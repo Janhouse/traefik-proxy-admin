@@ -5,6 +5,7 @@ import { db, services } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { TRAEFIK_SESSION_COOKIE, COOKIE_DEFAULTS } from "@/lib/constants";
+import { ServiceSecurityService } from "@/lib/services/service-security.service";
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,13 +33,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "State expired" }, { status: 400 });
     }
 
-    const ssoConfig = await getSSOConfig();
-    
+    const ssoProviderConfig = await getSSOConfig();
+
     // Exchange code for tokens
-    const tokens = await exchangeCodeForToken(ssoConfig, code);
-    
+    const tokens = await exchangeCodeForToken(ssoProviderConfig, code);
+
     // Get user information
-    const userInfo = await getUserInfo(ssoConfig, tokens.access_token);
+    const userInfo = await getUserInfo(ssoProviderConfig, tokens.access_token);
 
     // Get service configuration
     const [service] = await db
@@ -50,9 +51,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Service not found or disabled" }, { status: 404 });
     }
 
+    // Get SSO security configurations for this service
+    const securityConfigs = await ServiceSecurityService.getEnabledSecurityConfigsForService(serviceId);
+    const ssoConfigRecord = securityConfigs.find(config => config.securityType === 'sso');
+
+    if (!ssoConfigRecord) {
+      return NextResponse.json({ error: "SSO not configured for this service" }, { status: 403 });
+    }
+
+    // Parse the config JSON
+    const ssoConfig = JSON.parse(ssoConfigRecord.config) as { groups: string[]; users: string[] };
+
     // Check authorization
-    const authorized = checkUserAuthorization(service, userInfo);
-    
+    const authorized = checkUserAuthorization(ssoConfig, userInfo);
+
     if (!authorized) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
@@ -91,37 +103,25 @@ export async function GET(request: NextRequest) {
 }
 
 function checkUserAuthorization(
-  service: { ssoGroups?: string | null; ssoUsers?: string | null },
+  ssoConfig: { groups: string[]; users: string[] },
   userInfo: { sub: string; name: string; groups?: string[] }
 ): boolean {
   // If no specific authorization is configured, allow access
-  if (!service.ssoGroups && !service.ssoUsers) {
+  if (ssoConfig.groups.length === 0 && ssoConfig.users.length === 0) {
     return true;
   }
 
-  // Check user authorization
-  if (service.ssoUsers) {
-    try {
-      const allowedUsers = JSON.parse(service.ssoUsers);
-      if (allowedUsers.includes(userInfo.sub) || allowedUsers.includes(userInfo.name)) {
-        return true;
-      }
-    } catch (e) {
-      console.error("Error parsing SSO users:", e);
+  // Check group membership
+  if (ssoConfig.groups.length > 0 && userInfo.groups) {
+    if (userInfo.groups.some(group => ssoConfig.groups.includes(group))) {
+      return true;
     }
   }
 
-  // Check group authorization
-  if (service.ssoGroups && userInfo.groups) {
-    try {
-      const allowedGroups = JSON.parse(service.ssoGroups);
-      for (const group of userInfo.groups) {
-        if (allowedGroups.includes(group)) {
-          return true;
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing SSO groups:", e);
+  // Check specific users
+  if (ssoConfig.users.length > 0) {
+    if (ssoConfig.users.includes(userInfo.sub) || ssoConfig.users.includes(userInfo.name)) {
+      return true;
     }
   }
 

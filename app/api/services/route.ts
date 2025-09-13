@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, services, NewService } from "@/lib/db";
+import { db, services, serviceSecurityConfigs, NewService } from "@/lib/db";
 import { checkAndDisableExpiredServices } from "@/lib/service-scheduler";
+import { eq, sql, count } from "drizzle-orm";
 import "@/lib/startup"; // Initialize background services
 
 export async function GET() {
@@ -10,9 +11,36 @@ export async function GET() {
     if (disabledCount > 0) {
       console.log(`API: Auto-disabled ${disabledCount} expired service(s) on page load`);
     }
-    
+
     const allServices = await db.select().from(services);
-    return NextResponse.json(allServices);
+
+    // Get security configuration counts for each service
+    const servicesWithSecurity = await Promise.all(
+      allServices.map(async (service) => {
+        // Get security config counts
+        const securityConfigs = await db
+          .select({
+            securityType: serviceSecurityConfigs.securityType
+          })
+          .from(serviceSecurityConfigs)
+          .where(eq(serviceSecurityConfigs.serviceId, service.id));
+
+        const hasSharedLink = securityConfigs.some(config => config.securityType === 'shared_link');
+        const hasSso = securityConfigs.some(config => config.securityType === 'sso');
+        const hasBasicAuth = securityConfigs.some(config => config.securityType === 'basic_auth');
+        const basicAuthCount = securityConfigs.filter(config => config.securityType === 'basic_auth').length;
+
+        return {
+          ...service,
+          hasSharedLink,
+          hasSso,
+          hasBasicAuth,
+          basicAuthCount,
+        };
+      })
+    );
+
+    return NextResponse.json(servicesWithSecurity);
   } catch (error) {
     console.error("Error fetching services:", error);
     return NextResponse.json(
@@ -35,10 +63,8 @@ export async function POST(request: NextRequest) {
       enabled: body.enabled !== undefined ? body.enabled : true,
       enabledAt: (body.enabled !== false) ? new Date() : undefined, // Set enabledAt if service is enabled
       enableDurationMinutes: body.enableDurationMinutes,
-      authMethod: body.authMethod || "none",
-      ssoGroups: body.ssoGroups,
-      ssoUsers: body.ssoUsers,
       middlewares: body.middlewares,
+      requestHeaders: body.requestHeaders,
       updatedAt: new Date(),
     };
 

@@ -14,19 +14,17 @@ interface ServiceCountdownProps {
 export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpired }: ServiceCountdownProps) {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [disableTime, setDisableTime] = useState<string>("");
+  const [hasExpired, setHasExpired] = useState<boolean>(false);
 
   useEffect(() => {
     if (!enabled || !enabledAt) {
       setTimeLeft("");
+      setHasExpired(false);
       return;
     }
 
-    // Debug logging
-    console.log("ServiceCountdown - durationMinutes:", durationMinutes, "type:", typeof durationMinutes);
-
     const updateCountdown = () => {
       const remaining = formatDurationRemaining(enabledAt, durationMinutes);
-      console.log("ServiceCountdown - remaining:", remaining);
       setTimeLeft(remaining || "");
       
       // Calculate the exact disable time for tooltip
@@ -38,8 +36,9 @@ export function ServiceCountdown({ enabledAt, enabled, durationMinutes, onExpire
         setDisableTime("");
       }
       
-      // If the countdown reached "Expired", trigger the callback
-      if (remaining === "Expired" && onExpired) {
+      // If the countdown reached "Expired", trigger the callback only once
+      if (remaining === "Expired" && onExpired && !hasExpired) {
+        setHasExpired(true);
         onExpired();
       }
     };

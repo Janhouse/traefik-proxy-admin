@@ -17,10 +17,8 @@ export async function PUT(
       targetPort: body.targetPort,
       isHttps: body.isHttps,
       enabled: body.enabled,
-      authMethod: body.authMethod,
-      ssoGroups: body.ssoGroups,
-      ssoUsers: body.ssoUsers,
       middlewares: body.middlewares,
+      requestHeaders: body.requestHeaders,
       enableDurationMinutes: body.enableDurationMinutes,
       updatedAt: new Date(),
     };

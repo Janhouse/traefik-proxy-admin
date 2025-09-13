@@ -4,6 +4,7 @@ import { sessionManager } from "@/lib/session-manager";
 import { db, services, sharedLinks } from "@/lib/db";
 import { eq, and, gt } from "drizzle-orm";
 import { TRAEFIK_SESSION_COOKIE, COOKIE_DEFAULTS } from "@/lib/constants";
+import { ServiceSecurityService } from "@/lib/services/service-security.service";
 
 export async function GET(request: NextRequest) {
   // const headersList = await headers();
@@ -38,13 +39,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // If no auth required, allow access
-    if (service.authMethod === "none") {
+    // Get security configurations for this service
+    const securityConfigs = await ServiceSecurityService.getEnabledSecurityConfigsForService(serviceId);
+
+    // If no security configurations, allow access
+    if (securityConfigs.length === 0) {
       return NextResponse.json({ status: "authorized" });
     }
 
     // Check for traefik-token in URL (shared link access)
-    if (traefikToken && service.authMethod === "shared_link") {
+    const sharedLinkConfig = securityConfigs.find(config => config.securityType === 'shared_link');
+    if (traefikToken && sharedLinkConfig) {
       const [sharedLink] = await db
         .select()
         .from(sharedLinks)
@@ -159,7 +164,8 @@ export async function GET(request: NextRequest) {
     }
 
     // For SSO, check user/group authorization
-    if (service.authMethod === "sso" && session.userIdentifier) {
+    const ssoConfig = securityConfigs.find(config => config.securityType === 'sso');
+    if (ssoConfig && session.userIdentifier) {
       // This would be extended with actual group/user checking logic
       // For now, we'll assume the session is valid if it exists
     }

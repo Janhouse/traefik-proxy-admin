@@ -25,9 +25,11 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const buildId = process.env.BUILD_ID
+  // Make BUILD_ID available globally via a data attribute
+  const buildId = process.env.BUILD_ID || "0.1.0";
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-build-id={buildId}>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
@@ -38,7 +40,6 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
-          <div className="text-muted-foreground">Version: {buildId}</div>
         </ThemeProvider>
       </body>
     </html>

@@ -1,5 +1,22 @@
 import { pgTable, text, integer, boolean, timestamp, varchar, uuid } from "drizzle-orm/pg-core";
 
+export const basicAuthConfigs = pgTable("basic_auth_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 255 }).notNull().unique(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const basicAuthUsers = pgTable("basic_auth_users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  configId: uuid("config_id").references(() => basicAuthConfigs.id, { onDelete: "cascade" }).notNull(),
+  username: varchar("username", { length: 255 }).notNull(),
+  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const services = pgTable("services", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -10,10 +27,19 @@ export const services = pgTable("services", {
   enabled: boolean("enabled").default(true).notNull(),
   enabledAt: timestamp("enabled_at").defaultNow(),
   enableDurationMinutes: integer("enable_duration_minutes"), // null = forever, number = minutes until auto-disable
-  authMethod: varchar("auth_method", { length: 50 }).notNull(), // 'none', 'shared_link', 'sso'
-  ssoGroups: text("sso_groups"), // JSON array of allowed groups for SSO
-  ssoUsers: text("sso_users"), // JSON array of allowed users for SSO
   middlewares: text("middlewares"), // JSON array of additional middlewares for this service
+  requestHeaders: text("request_headers"), // JSON object of custom request headers to add/modify
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const serviceSecurityConfigs = pgTable("service_security_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  serviceId: uuid("service_id").references(() => services.id, { onDelete: "cascade" }).notNull(),
+  securityType: varchar("security_type", { length: 50 }).notNull(), // 'shared_link', 'sso', 'basic_auth'
+  isEnabled: boolean("is_enabled").default(true).notNull(),
+  priority: integer("priority").default(0).notNull(), // Lower numbers = higher priority
+  config: text("config").notNull(), // JSON configuration specific to the security type
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -49,8 +75,14 @@ export const appConfig = pgTable("app_config", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export type BasicAuthConfig = typeof basicAuthConfigs.$inferSelect;
+export type NewBasicAuthConfig = typeof basicAuthConfigs.$inferInsert;
+export type BasicAuthUser = typeof basicAuthUsers.$inferSelect;
+export type NewBasicAuthUser = typeof basicAuthUsers.$inferInsert;
 export type Service = typeof services.$inferSelect;
 export type NewService = typeof services.$inferInsert;
+export type ServiceSecurityConfig = typeof serviceSecurityConfigs.$inferSelect;
+export type NewServiceSecurityConfig = typeof serviceSecurityConfigs.$inferInsert;
 export type SharedLink = typeof sharedLinks.$inferSelect;
 export type NewSharedLink = typeof sharedLinks.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
