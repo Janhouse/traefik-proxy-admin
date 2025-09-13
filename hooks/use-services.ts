@@ -35,8 +35,8 @@ export function useServices() {
         if (config.baseDomain) {
           setBaseDomain(config.baseDomain);
         }
-        if (config.defaultServiceDurationMinutes !== undefined) {
-          setDefaultDuration(config.defaultServiceDurationMinutes);
+        if (config.defaultEnableDurationMinutes !== undefined) {
+          setDefaultDuration(config.defaultEnableDurationMinutes);
         }
       }
     } catch (error) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,7 +29,8 @@ export function ServiceForm({
   onSubmit,
   onCancel,
 }: ServiceFormProps) {
-  const defaultFormData: ServiceFormData = {
+  // Create defaultFormData as a memoized callback to ensure it uses current defaultDuration
+  const getDefaultFormData = useCallback((): ServiceFormData => ({
     name: "",
     subdomain: "",
     targetIp: "",
@@ -37,13 +38,13 @@ export function ServiceForm({
     isHttps: true,
     enabled: true,
     enabledAt: null,
-    enableDurationMinutes: defaultDuration || null,
+    enableDurationMinutes: defaultDuration ?? null,
     middlewares: "",
     requestHeaders: "",
-  };
+  }), [defaultDuration]);
 
-  const [formData, setFormData] = useState<ServiceFormData>(defaultFormData);
-  const [originalFormData, setOriginalFormData] = useState<ServiceFormData>(defaultFormData);
+  const [formData, setFormData] = useState<ServiceFormData>(getDefaultFormData);
+  const [originalFormData, setOriginalFormData] = useState<ServiceFormData>(getDefaultFormData);
   const [middlewareText, setMiddlewareText] = useState("");
   const [hostHeader, setHostHeader] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -79,12 +80,22 @@ export function ServiceForm({
       }
       setHostHeader(existingHostHeader);
     } else {
-      setFormData(defaultFormData);
-      setOriginalFormData(defaultFormData);
+      const defaultData = getDefaultFormData();
+      setFormData(defaultData);
+      setOriginalFormData(defaultData);
       setMiddlewareText("");
       setHostHeader("");
     }
   }, [service, defaultDuration]);
+
+  // Update form data when defaultDuration changes and we're adding a new service
+  useEffect(() => {
+    if (!service && defaultDuration !== undefined) {
+      const defaultData = getDefaultFormData();
+      setFormData(defaultData);
+      setOriginalFormData(defaultData);
+    }
+  }, [defaultDuration, service, getDefaultFormData]);
 
   // Update middlewares when text changes
   useEffect(() => {
@@ -248,9 +259,22 @@ export function ServiceForm({
               <div className="space-y-2">
                 <Label htmlFor="duration">Auto-disable Duration</Label>
                 <Select
-                  value={formData.enableDurationMinutes?.toString() || "null"}
+                  value={formData.enableDurationMinutes === null || isNaN(formData.enableDurationMinutes as number)
+                    ? "forever"
+                    : formData.enableDurationMinutes?.toString() || "forever"}
                   onValueChange={(value) => {
-                    const duration = value === "null" ? null : parseInt(value);
+                    // Ignore empty string changes - this seems to be a spurious event from the Select component
+                    if (value === "") {
+                      return;
+                    }
+
+                    let duration: number | null;
+                    if (value === "forever") {
+                      duration = null;
+                    } else {
+                      const parsed = parseInt(value);
+                      duration = isNaN(parsed) ? null : parsed;
+                    }
                     setFormData({ ...formData, enableDurationMinutes: duration });
                   }}
                   disabled={submitting}
@@ -260,7 +284,7 @@ export function ServiceForm({
                   </SelectTrigger>
                   <SelectContent>
                     {DURATION_PRESETS.map((preset) => (
-                      <SelectItem key={preset.value?.toString() || "null"} value={preset.value?.toString() || "null"}>
+                      <SelectItem key={preset.value === null ? "forever" : preset.value.toString()} value={preset.value === null ? "forever" : preset.value.toString()}>
                         {preset.label}
                       </SelectItem>
                     ))}

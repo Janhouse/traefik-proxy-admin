@@ -26,19 +26,7 @@ export function UnsavedChangesGuard({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
-  if (!hasUnsavedChanges) {
-    return children;
-  }
-
-  return (
-    <ConfirmDialog
-      trigger={children}
-      title="Unsaved Changes"
-      description="You have unsaved changes. Are you sure you want to leave without saving?"
-      confirmText="Leave without saving"
-      cancelText="Stay"
-      onConfirm={onDiscard}
-      variant="destructive"
-    />
-  );
+  // Always render children normally - only handle browser navigation events
+  // The form itself should handle the cancel button with its own confirmation
+  return <>{children}</>;
 }
