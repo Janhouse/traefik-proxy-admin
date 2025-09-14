@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Service } from "@/components/service-table";
 
-export type ServiceFormData = Omit<Service, "id" | "createdAt" | "updatedAt">;
+export type ServiceFormData = Omit<Service, "id" | "createdAt" | "updatedAt"> & {
+  domainId?: string;
+};
 
 interface UseServiceFormOptions {
   service: Service | null;
@@ -12,6 +14,7 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
   const getDefaultFormData = useCallback((): ServiceFormData => ({
     name: "",
     subdomain: "",
+    domainId: "",
     targetIp: "",
     targetPort: 80,
     isHttps: true,
@@ -32,6 +35,7 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
       const serviceData: ServiceFormData = {
         name: service.name,
         subdomain: service.subdomain,
+        domainId: service.domainId,
         targetIp: service.targetIp,
         targetPort: service.targetPort,
         isHttps: service.isHttps,

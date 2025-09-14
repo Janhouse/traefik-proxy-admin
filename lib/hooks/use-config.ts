@@ -3,8 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 
 export interface GlobalConfig {
-  baseDomain: string;
-  certResolver: string;
   globalMiddlewares: string[];
   adminPanelDomain: string;
   defaultEntrypoint?: string;
@@ -12,8 +10,6 @@ export interface GlobalConfig {
 }
 
 const defaultConfig: GlobalConfig = {
-  baseDomain: "",
-  certResolver: "",
   globalMiddlewares: [],
   adminPanelDomain: "localhost:3000",
   defaultEnableDurationMinutes: 720,
@@ -35,8 +31,6 @@ export function useConfig() {
         const data = await response.json();
         // Ensure all fields have values to prevent controlled/uncontrolled input issues
         const fullConfig = {
-          baseDomain: data.baseDomain || "",
-          certResolver: data.certResolver || "",
           globalMiddlewares: Array.isArray(data.globalMiddlewares) ? data.globalMiddlewares : [],
           adminPanelDomain: data.adminPanelDomain || "localhost:3000",
           defaultEntrypoint: data.defaultEntrypoint || "",
@@ -80,8 +74,6 @@ export function useConfig() {
         const updatedConfig = await response.json();
         // Ensure all fields are properly set
         const safeConfig = {
-          baseDomain: updatedConfig.baseDomain || "",
-          certResolver: updatedConfig.certResolver || "",
           globalMiddlewares: Array.isArray(updatedConfig.globalMiddlewares) ? updatedConfig.globalMiddlewares : [],
           adminPanelDomain: updatedConfig.adminPanelDomain || "localhost:3000",
           defaultEntrypoint: updatedConfig.defaultEntrypoint || "",

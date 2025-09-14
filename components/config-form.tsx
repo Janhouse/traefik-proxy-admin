@@ -34,31 +34,9 @@ export function ConfigForm({
         <CardContent className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="baseDomain">Base Domain</Label>
-              <Input
-                id="baseDomain"
-                placeholder="exposed.example.com"
-                value={config.baseDomain}
-                onChange={(e) =>
-                  onConfigChange({ ...config, baseDomain: e.target.value })
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Services will be accessible as subdomain.basedomain
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="certResolver">Certificate Resolver</Label>
-              <Input
-                id="certResolver"
-                placeholder="letsencrypt-dns"
-                value={config.certResolver}
-                onChange={(e) =>
-                  onConfigChange({ ...config, certResolver: e.target.value })
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Traefik certificate resolver name for SSL certificates
+              <p className="text-sm text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                <strong>Domain & Certificate Settings</strong> are now managed individually in the <a href="/domains" className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline">Domains page</a>.
+                Each domain can have its own certificate resolver and wildcard certificate settings.
               </p>
             </div>
             <div className="space-y-2">
@@ -154,10 +132,12 @@ export function ConfigForm({
           <div className="rounded-lg bg-muted p-4">
             <pre className="text-sm">
 {`Example service configuration:
-Domain: myservice.${config.baseDomain || 'example.com'}
-Certificate: ${config.certResolver || 'letsencrypt-dns'}${config.defaultEntrypoint ? `\nEntrypoint: ${config.defaultEntrypoint}` : ''}
+Domain: myservice.[configured-domain]
+Certificate: [per-domain cert resolver]${config.defaultEntrypoint ? `\nEntrypoint: ${config.defaultEntrypoint}` : ''}
 Middlewares: [${middlewareText.split('\n').filter(m => m.trim()).join(', ')}] + auth + service-specific
-Wildcard Certificate: Both ${config.baseDomain || 'example.com'} and *.${config.baseDomain || 'example.com'}`}
+
+Note: Domains and certificates are now configured individually in the Domains page.
+Each domain can have its own certificate resolver and wildcard settings.`}
             </pre>
           </div>
         </CardContent>

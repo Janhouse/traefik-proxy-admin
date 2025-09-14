@@ -43,6 +43,13 @@
       "when": 1757798480879,
       "tag": "0005_known_squadron_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1757847705645,
+      "tag": "0006_large_chameleon",
+      "breakpoints": true
     }
   ]
 }

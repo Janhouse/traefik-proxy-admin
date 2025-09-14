@@ -1,5 +1,5 @@
 FROM node:23-alpine AS base
-RUN apk add --update --no-cache git wget postgresql15-client \
+RUN apk add --update --no-cache git wget \
   && rm -rf /var/cache/apk/*
 
 FROM base AS deps
@@ -47,7 +47,7 @@ COPY --from=builder /app/.next/static ./.next/static
 
 COPY --from=builder /app/.next/BUILD_ID ./.next/BUILD_ID
 
-COPY ./drizzle/migrations/*.sql ./drizzle/
+COPY ./drizzle/ ./drizzle/
 COPY ./entrypoint.sh ./
 
 RUN mkdir -p /app/.next/cache && chown nextjs:nodejs /app/.next/cache

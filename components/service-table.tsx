@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ export interface Service {
   id: string;
   name: string;
   subdomain: string;
+  domainId: string;
   targetIp: string;
   targetPort: number;
   isHttps: boolean;
@@ -37,6 +39,15 @@ export interface Service {
   requestHeaders?: string;
   createdAt: string;
   updatedAt: string;
+  // Domain information
+  domain?: {
+    id: string;
+    name: string;
+    domain: string;
+    useWildcardCert: boolean;
+    certResolver: string;
+    isDefault: boolean;
+  };
   // Security configuration indicators
   hasSharedLink?: boolean;
   hasSso?: boolean;
@@ -47,20 +58,19 @@ export interface Service {
 interface ServiceTableProps {
   services: Service[];
   loading: boolean;
-  baseDomain: string;
-  onAddNew: () => void;
-  onEdit: (service: Service) => void;
+  onAddNew?: () => void;
+  onEdit?: (service: Service) => void;
   onDelete: (id: string) => Promise<void>;
   onToggle: (id: string) => Promise<void>;
-  onManageSecurity: (service: Service) => void;
+  onManageSecurity?: (service: Service) => void;
   onGenerateShareLink?: (serviceId: string) => Promise<void>;
   onRefresh: () => void;
+  useRouterNavigation?: boolean;
 }
 
 export function ServiceTable({
   services,
   loading,
-  baseDomain,
   onAddNew,
   onEdit,
   onDelete,
@@ -68,9 +78,11 @@ export function ServiceTable({
   onManageSecurity,
   onGenerateShareLink,
   onRefresh,
+  useRouterNavigation = false,
 }: ServiceTableProps) {
   const [deletingService, setDeletingService] = useState<string | null>(null);
   const [togglingService, setTogglingService] = useState<string | null>(null);
+  const router = useRouter();
 
   const formatDurationForButton = (durationMinutes: number | null | undefined): string => {
     if (!durationMinutes) return "∞";
@@ -139,7 +151,7 @@ export function ServiceTable({
               Manage your Traefik proxy services
             </CardDescription>
           </div>
-          <Button onClick={onAddNew}>
+          <Button onClick={useRouterNavigation ? () => router.push('/services/add') : onAddNew}>
             <Plus className="mr-2 h-4 w-4" />
             Add Service
           </Button>
@@ -155,7 +167,7 @@ export function ServiceTable({
             <p className="text-gray-500 dark:text-gray-400 mb-4">
               Get started by creating your first service.
             </p>
-            <Button onClick={onAddNew}>
+            <Button onClick={useRouterNavigation ? () => router.push('/services/add') : onAddNew}>
               <Plus className="mr-2 h-4 w-4" />
               Add Service
             </Button>
@@ -238,7 +250,7 @@ export function ServiceTable({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onManageSecurity(service)}
+                      onClick={() => onManageSecurity?.(service)}
                     >
                       <Shield className="h-4 w-4 mr-1" />
                       Security
@@ -246,7 +258,7 @@ export function ServiceTable({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onEdit(service)}
+                      onClick={useRouterNavigation ? () => router.push(`/services/${service.id}/edit`) : () => onEdit?.(service)}
                     >
                       <Edit className="h-4 w-4 mr-1" />
                       Edit
@@ -295,13 +307,13 @@ export function ServiceTable({
                     <label className="text-gray-500 dark:text-gray-400">URL</label>
                     <div className="flex items-center gap-1">
                       <span className="font-mono">
-                        {service.subdomain}.{baseDomain}
+                        {service.subdomain}.{service.domain?.domain}
                       </span>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-auto p-1"
-                        onClick={() => window.open(`https://${service.subdomain}.${baseDomain}`, '_blank')}
+                        onClick={() => window.open(`https://${service.subdomain}.${service.domain?.domain}`, '_blank')}
                       >
                         <ExternalLink className="h-3 w-3" />
                       </Button>

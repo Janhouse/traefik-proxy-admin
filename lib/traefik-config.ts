@@ -1,11 +1,11 @@
 import "server-only";
-import { db, services } from "@/lib/db";
+import { db, services, domains } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { getGlobalConfig, type GlobalTraefikConfig } from "./app-config";
 import { BasicAuthService } from "./services/basic-auth.service";
 import { ServiceSecurityService } from "./services/service-security.service";
 import { TRAEFIK_SESSION_COOKIE } from "./constants";
-import type { Service } from "@/lib/db/schema";
+import type { Service, Domain } from "@/lib/db/schema";
 
 export interface TraefikService {
   loadBalancer: {
@@ -184,6 +184,7 @@ async function buildServiceMiddlewares(
  */
 async function createTraefikService(
   service: Service,
+  domain: Domain,
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig
 ): Promise<void> {
@@ -224,35 +225,40 @@ async function createTraefikService(
   const middlewares = await buildServiceMiddlewares(service, globalConfig, config);
 
   // Router configuration
-  const fullDomain = `${service.subdomain}.${globalConfig.baseDomain}`;
+  const fullDomain = `${service.subdomain}.${domain.domain}`;
   const router: TraefikRouter = {
     rule: `Host(\`${fullDomain}\`)`,
     service: serviceName,
     ...(middlewares.length > 0 && { middlewares }),
     ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
     tls: {
-      certResolver: globalConfig.certResolver,
-      domains: [
-        {
-          main: globalConfig.baseDomain,
-          sans: [`*.${globalConfig.baseDomain}`],
-        },
-      ],
+      certResolver: domain.certResolver,
+      ...(domain.useWildcardCert && {
+        domains: [
+          {
+            main: domain.domain,
+            sans: [`*.${domain.domain}`],
+          },
+        ],
+      }),
     },
   };
   config.http.routers[routerName] = router;
 }
 
 /**
- * Create wildcard certificate trigger configuration
+ * Create wildcard certificate trigger configuration for a domain
  */
 function createWildcardCertTrigger(
+  domain: Domain,
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig
 ): void {
-  const wildcardServiceName = "wildcard-cert-trigger";
-  const wildcardRouterName = "wildcard-cert-router";
-  const replacePathMiddlewareName = "wildcard-replace-path";
+  // Create unique names for this domain
+  const domainSafe = domain.domain.replace(/\./g, '-');
+  const wildcardServiceName = `wildcard-cert-trigger-${domainSafe}`;
+  const wildcardRouterName = `wildcard-cert-router-${domainSafe}`;
+  const replacePathMiddlewareName = `wildcard-replace-path-${domainSafe}`;
 
   // Create middleware to replace any path with the whitepage endpoint
   config.http.middlewares![replacePathMiddlewareName] = {
@@ -285,16 +291,16 @@ function createWildcardCertTrigger(
 
   // Create router for the base domain to trigger wildcard cert generation
   const wildcardRouter: TraefikRouter = {
-    rule: `Host(\`${globalConfig.baseDomain}\`)`,
+    rule: `Host(\`${domain.domain}\`)`,
     service: wildcardServiceName,
     ...(wildcardMiddlewares.length > 0 && { middlewares: wildcardMiddlewares }),
     ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
     tls: {
-      certResolver: globalConfig.certResolver,
+      certResolver: domain.certResolver,
       domains: [
         {
-          main: globalConfig.baseDomain,
-          sans: [`*.${globalConfig.baseDomain}`],
+          main: domain.domain,
+          sans: [`*.${domain.domain}`],
         },
       ],
     },
@@ -306,10 +312,18 @@ function createWildcardCertTrigger(
  * Generate complete Traefik configuration
  */
 export async function generateTraefikConfig(): Promise<TraefikConfig> {
+  // Get enabled services with their domain information
   const enabledServices = await db
-    .select()
+    .select({
+      service: services,
+      domain: domains,
+    })
     .from(services)
+    .leftJoin(domains, eq(services.domainId, domains.id))
     .where(eq(services.enabled, true));
+
+  // Get all domains to ensure wildcard certificates are created even when no services are enabled
+  const allDomains = await db.select().from(domains);
 
   const globalConfig = await getGlobalConfig();
 
@@ -321,14 +335,35 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     },
   };
 
+  // Track unique domains for wildcard certificate generation
+  const uniqueDomains = new Map<string, Domain>();
+
   // Process each enabled service
-  for (const service of enabledServices) {
-    await createTraefikService(service, globalConfig, config);
+  for (const item of enabledServices) {
+    const service = item.service;
+    const domain = item.domain;
+
+    if (!domain) {
+      console.error(`Service ${service.name} has no associated domain, skipping`);
+      continue;
+    }
+
+    await createTraefikService(service, domain, globalConfig, config);
+
+    // Track this domain for wildcard certificate generation
+    uniqueDomains.set(domain.id, domain);
   }
 
-  // Add wildcard certificate trigger if base domain is configured
-  if (globalConfig.baseDomain) {
-    createWildcardCertTrigger(globalConfig, config);
+  // Add ALL domains to ensure wildcard certificates are created even when no services are enabled
+  for (const domain of allDomains) {
+    uniqueDomains.set(domain.id, domain);
+  }
+
+  // Add wildcard certificate triggers for domains that use wildcard certificates
+  for (const domain of uniqueDomains.values()) {
+    if (domain.useWildcardCert) {
+      createWildcardCertTrigger(domain, globalConfig, config);
+    }
   }
 
   // Remove middlewares block if it's empty

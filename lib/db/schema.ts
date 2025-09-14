@@ -17,10 +17,23 @@ export const basicAuthUsers = pgTable("basic_auth_users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const domains = pgTable("domains", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 255 }).notNull(),
+  domain: varchar("domain", { length: 255 }).notNull().unique(),
+  description: text("description"),
+  useWildcardCert: boolean("use_wildcard_cert").default(true).notNull(),
+  certResolver: varchar("cert_resolver", { length: 255 }).notNull().default("letsencrypt"),
+  isDefault: boolean("is_default").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const services = pgTable("services", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 255 }).notNull(),
-  subdomain: varchar("subdomain", { length: 255 }).notNull().unique(),
+  subdomain: varchar("subdomain", { length: 255 }).notNull(),
+  domainId: uuid("domain_id").references(() => domains.id, { onDelete: "restrict" }).notNull(),
   targetIp: varchar("target_ip", { length: 45 }).notNull(),
   targetPort: integer("target_port").notNull(),
   isHttps: boolean("is_https").default(false).notNull(),
@@ -80,6 +93,8 @@ export type BasicAuthConfig = typeof basicAuthConfigs.$inferSelect;
 export type NewBasicAuthConfig = typeof basicAuthConfigs.$inferInsert;
 export type BasicAuthUser = typeof basicAuthUsers.$inferSelect;
 export type NewBasicAuthUser = typeof basicAuthUsers.$inferInsert;
+export type Domain = typeof domains.$inferSelect;
+export type NewDomain = typeof domains.$inferInsert;
 export type Service = typeof services.$inferSelect;
 export type NewService = typeof services.$inferInsert;
 export type ServiceSecurityConfig = typeof serviceSecurityConfigs.$inferSelect;

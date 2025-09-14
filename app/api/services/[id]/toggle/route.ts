@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, services } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { ServiceService } from "@/lib/services/service.service";
 
 export async function POST(
   request: NextRequest,
@@ -11,40 +10,11 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const { durationMinutes } = body;
 
-    // Get current service state
-    const [service] = await db
-      .select()
-      .from(services)
-      .where(eq(services.id, id));
+    const updatedService = await ServiceService.toggleService(id, undefined, durationMinutes);
 
-    if (!service) {
+    if (!updatedService) {
       return NextResponse.json({ error: "Service not found" }, { status: 404 });
     }
-
-    // Toggle enabled status
-    const newEnabledState = !service.enabled;
-    const updateData = {
-      enabled: newEnabledState,
-      updatedAt: new Date(),
-    } as Record<string, unknown>;
-
-    // If enabling the service, set enabledAt and duration
-    if (newEnabledState) {
-      updateData.enabledAt = new Date();
-      
-      // Use provided duration, or keep the service's existing duration (including null for infinite)
-      if (durationMinutes !== undefined) {
-        updateData.enableDurationMinutes = durationMinutes;
-      }
-      // Otherwise keep the existing service duration (null = infinite, number = finite)
-    }
-
-    // Update the service
-    const [updatedService] = await db
-      .update(services)
-      .set(updateData)
-      .where(eq(services.id, id))
-      .returning();
 
     return NextResponse.json(updatedService);
   } catch (error) {

@@ -19,9 +19,9 @@ export async function PUT(request: NextRequest) {
     const body = await request.json() as GlobalTraefikConfig;
     
     // Validate required fields
-    if (!body.baseDomain || !body.certResolver) {
+    if (!body.adminPanelDomain) {
       return NextResponse.json(
-        { error: "Base domain and certificate resolver are required" },
+        { error: "Admin panel domain is required" },
         { status: 400 }
       );
     }

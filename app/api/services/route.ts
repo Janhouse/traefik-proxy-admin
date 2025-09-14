@@ -1,45 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, services, serviceSecurityConfigs, NewService } from "@/lib/db";
-import { checkAndDisableExpiredServices } from "@/lib/service-scheduler";
-import { eq } from "drizzle-orm";
+import { NewService } from "@/lib/db";
+import { ServiceService } from "@/lib/services/service.service";
+import { DomainService } from "@/lib/services/domain.service";
 import "@/lib/startup"; // Initialize background services
 
 export async function GET() {
   try {
-    // Check and disable any expired services before returning the list
-    const disabledCount = await checkAndDisableExpiredServices();
-    if (disabledCount > 0) {
-      console.log(`API: Auto-disabled ${disabledCount} expired service(s) on page load`);
-    }
-
-    const allServices = await db.select().from(services);
-
-    // Get security configuration counts for each service
-    const servicesWithSecurity = await Promise.all(
-      allServices.map(async (service) => {
-        // Get security config counts
-        const securityConfigs = await db
-          .select({
-            securityType: serviceSecurityConfigs.securityType
-          })
-          .from(serviceSecurityConfigs)
-          .where(eq(serviceSecurityConfigs.serviceId, service.id));
-
-        const hasSharedLink = securityConfigs.some(config => config.securityType === 'shared_link');
-        const hasSso = securityConfigs.some(config => config.securityType === 'sso');
-        const hasBasicAuth = securityConfigs.some(config => config.securityType === 'basic_auth');
-        const basicAuthCount = securityConfigs.filter(config => config.securityType === 'basic_auth').length;
-
-        return {
-          ...service,
-          hasSharedLink,
-          hasSso,
-          hasBasicAuth,
-          basicAuthCount,
-        };
-      })
-    );
-
+    const servicesWithSecurity = await ServiceService.getAllServices();
     return NextResponse.json(servicesWithSecurity);
   } catch (error) {
     console.error("Error fetching services:", error);
@@ -53,10 +20,33 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
+    // Validate domainId or get default domain
+    let domainId = body.domainId;
+    if (!domainId) {
+      const defaultDomain = await DomainService.getDefaultDomain();
+      if (!defaultDomain) {
+        return NextResponse.json(
+          { error: "No domain specified and no default domain found" },
+          { status: 400 }
+        );
+      }
+      domainId = defaultDomain.id;
+    } else {
+      // Validate that the specified domain exists
+      const domainExists = await DomainService.domainExists(domainId);
+      if (!domainExists) {
+        return NextResponse.json(
+          { error: "Specified domain does not exist" },
+          { status: 400 }
+        );
+      }
+    }
+
     const newService: NewService = {
       name: body.name,
       subdomain: body.subdomain,
+      domainId: domainId,
       targetIp: body.targetIp,
       targetPort: body.targetPort,
       isHttps: body.isHttps || false,
@@ -69,7 +59,7 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date(),
     };
 
-    const [service] = await db.insert(services).values(newService).returning();
+    const service = await ServiceService.createService(newService);
     return NextResponse.json(service);
   } catch (error) {
     console.error("Error creating service:", error);

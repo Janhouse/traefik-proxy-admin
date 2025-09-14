@@ -2,13 +2,11 @@
 
 import { useState, useCallback } from "react";
 import type { Service } from "@/components/service-table";
-
-type ServiceFormData = Omit<Service, "id" | "createdAt" | "updatedAt">;
+import type { ServiceFormData } from "./use-service-form";
 
 export function useServices() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
-  const [baseDomain, setBaseDomain] = useState("example.com");
   const [defaultDuration, setDefaultDuration] = useState<number | undefined>(12);
 
   const fetchServices = useCallback(async () => {
@@ -27,20 +25,17 @@ export function useServices() {
     }
   }, []);
 
-  const fetchBaseDomain = useCallback(async () => {
+  const fetchConfig = useCallback(async () => {
     try {
       const response = await fetch("/api/config");
       if (response.ok) {
         const config = await response.json();
-        if (config.baseDomain) {
-          setBaseDomain(config.baseDomain);
-        }
         if (config.defaultEnableDurationMinutes !== undefined) {
           setDefaultDuration(config.defaultEnableDurationMinutes);
         }
       }
     } catch (error) {
-      console.error("Failed to fetch base domain:", error);
+      console.error("Failed to fetch config:", error);
     }
   }, []);
 
@@ -111,13 +106,30 @@ export function useServices() {
     }
   }, []);
 
+  const fetchServiceById = useCallback(async (id: string): Promise<Service | null> => {
+    try {
+      const response = await fetch(`/api/services/${id}`);
+      if (response.ok) {
+        return await response.json();
+      } else if (response.status === 404) {
+        return null;
+      } else {
+        console.error("Failed to fetch service");
+        return null;
+      }
+    } catch (error) {
+      console.error("Error fetching service:", error);
+      return null;
+    }
+  }, []);
+
   return {
     services,
     loading,
-    baseDomain,
     defaultDuration,
     fetchServices,
-    fetchBaseDomain,
+    fetchServiceById,
+    fetchConfig,
     saveService,
     deleteService,
     toggleService,

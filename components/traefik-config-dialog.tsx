@@ -17,7 +17,7 @@ interface TraefikConfigDialogProps {
 }
 
 interface GlobalConfig {
-  baseDomain: string;
+  sampleDomain: string;
   certResolver: string;
   globalMiddlewares: string[];
   adminPanelDomain: string;
@@ -26,7 +26,7 @@ interface GlobalConfig {
 
 export function TraefikConfigDialog({ trigger }: TraefikConfigDialogProps) {
   const [config, setConfig] = useState<GlobalConfig>({
-    baseDomain: "example.com",
+    sampleDomain: "example.com",
     certResolver: "letsencrypt",
     globalMiddlewares: [],
     adminPanelDomain: "localhost:3000",
@@ -174,7 +174,7 @@ networks:
                 <li className="flex items-start gap-2">
                   <span className="font-medium">•</span>
                   <span>
-                    <strong>Wildcard Certificate:</strong> A route for {config.baseDomain} requests both {config.baseDomain} and *.{config.baseDomain} certificates
+                    <strong>Wildcard Certificate:</strong> A route for {config.sampleDomain} requests both {config.sampleDomain} and *.{config.sampleDomain} certificates
                   </span>
                 </li>
                 <li className="flex items-start gap-2">
@@ -193,7 +193,7 @@ networks:
             <div className="bg-muted p-4 rounded-lg">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <strong>Base Domain:</strong> {config.baseDomain}
+                  <strong>Sample Domain:</strong> {config.sampleDomain}
                 </div>
                 <div>
                   <strong>Cert Resolver:</strong> {config.certResolver}
@@ -209,7 +209,7 @@ networks:
                 </div>
               </div>
               <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
-                <strong>Note:</strong> A route for {config.baseDomain} automatically requests certificates for both {config.baseDomain} and *.{config.baseDomain} using domains configuration
+                <strong>Note:</strong> A route for {config.sampleDomain} automatically requests certificates for both {config.sampleDomain} and *.{config.sampleDomain} using domains configuration
               </div>
             </div>
           </div>

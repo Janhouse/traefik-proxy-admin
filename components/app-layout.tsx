@@ -41,6 +41,16 @@ export function AppLayout({ children }: AppLayoutProps) {
                   Services
                 </NextLink>
                 <NextLink
+                  href="/domains"
+                  className={
+                    isActive("/domains")
+                      ? "text-gray-900 dark:text-gray-100 font-medium"
+                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                  }
+                >
+                  Domains
+                </NextLink>
+                <NextLink
                   href="/security"
                   className={
                     isActive("/security")
@@ -111,6 +121,17 @@ export function AppLayout({ children }: AppLayoutProps) {
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Services
+              </NextLink>
+              <NextLink
+                href="/domains"
+                className={`block ${
+                  isActive("/domains")
+                    ? "text-gray-900 dark:text-gray-100 font-medium"
+                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                }`}
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Domains
               </NextLink>
               <NextLink
                 href="/security"

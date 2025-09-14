@@ -182,7 +182,6 @@ certificatesResolvers:
 ### Example Global Configuration
 ```json
 {
-  "baseDomain": "exposed.example.com",
   "certResolver": "letsencrypt-dns",
   "globalMiddlewares": ["compression", "security-headers", "rate-limit"]
 }

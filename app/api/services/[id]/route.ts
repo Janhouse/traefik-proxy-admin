@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, services } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { ServiceService } from "@/lib/services/service.service";
+import { DomainService } from "@/lib/services/domain.service";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const service = await ServiceService.getServiceByIdWithDomain(id);
+
+    if (!service) {
+      return NextResponse.json(
+        { error: "Service not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json(service);
+  } catch (error) {
+    console.error("Error fetching service:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch service" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function PUT(
   request: NextRequest,
@@ -10,9 +35,21 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
 
-    const updateData = {
+    // Validate domainId if provided
+    if (body.domainId) {
+      const domainExists = await DomainService.domainExists(body.domainId);
+      if (!domainExists) {
+        return NextResponse.json(
+          { error: "Specified domain does not exist" },
+          { status: 400 }
+        );
+      }
+    }
+
+    const updateData: Record<string, unknown> = {
       name: body.name,
       subdomain: body.subdomain,
+      domainId: body.domainId,
       targetIp: body.targetIp,
       targetPort: body.targetPort,
       isHttps: body.isHttps,
@@ -21,19 +58,14 @@ export async function PUT(
       middlewares: body.middlewares,
       requestHeaders: body.requestHeaders,
       enableDurationMinutes: body.enableDurationMinutes,
-      updatedAt: new Date(),
-    } as Record<string, unknown>;
+    };
 
     // If enabling the service, set enabledAt
     if (body.enabled) {
       updateData.enabledAt = new Date();
     }
 
-    const [service] = await db
-      .update(services)
-      .set(updateData)
-      .where(eq(services.id, id))
-      .returning();
+    const service = await ServiceService.updateService(id, updateData);
 
     if (!service) {
       return NextResponse.json(
@@ -59,18 +91,16 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const [deletedService] = await db
-      .delete(services)
-      .where(eq(services.id, id))
-      .returning();
-
-    if (!deletedService) {
+    // Check if service exists before deletion
+    const existingService = await ServiceService.getServiceById(id);
+    if (!existingService) {
       return NextResponse.json(
         { error: "Service not found" },
         { status: 404 }
       );
     }
 
+    await ServiceService.deleteService(id);
     return NextResponse.json({ message: "Service deleted successfully" });
   } catch (error) {
     console.error("Error deleting service:", error);

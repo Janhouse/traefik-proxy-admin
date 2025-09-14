@@ -4,8 +4,6 @@ import { eq } from "drizzle-orm";
 import { DURATION_PRESETS } from "./duration-presets";
 
 export interface GlobalTraefikConfig {
-  baseDomain: string;
-  certResolver: string;
   globalMiddlewares: string[];
   adminPanelDomain: string;
   defaultEntrypoint?: string;
@@ -13,8 +11,6 @@ export interface GlobalTraefikConfig {
 }
 
 export const DEFAULT_CONFIG: GlobalTraefikConfig = {
-  baseDomain: "example.com",
-  certResolver: "letsencrypt",
   globalMiddlewares: [],
   adminPanelDomain: "localhost:3000",
   defaultEnableDurationMinutes: 720, // Default to 12 hours (720 minutes)

@@ -1,34 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { DurationSelect } from "@/components/duration-select";
 import { X, Save, AlertCircle } from "lucide-react";
 import { useServiceForm, type ServiceFormData } from "@/hooks/use-service-form";
 import { useServiceHeaders } from "@/hooks/use-service-headers";
+import { useDomains } from "@/lib/hooks/use-domains";
 import type { Service } from "./service-table";
 
 interface ServiceFormProps {
   service: Service | null;
-  baseDomain: string;
   defaultDuration?: number;
   onSubmit: (data: ServiceFormData) => Promise<void>;
   onCancel: () => void;
+  submitting?: boolean;
 }
 
 export function ServiceForm({
   service,
-  baseDomain,
   defaultDuration,
   onSubmit,
   onCancel,
+  submitting = false,
 }: ServiceFormProps) {
-  const [submitting, setSubmitting] = useState(false);
 
   // Use custom hooks for form management
   const { formData, updateFormData, hasUnsavedChanges } = useServiceForm({
@@ -41,16 +42,29 @@ export function ServiceForm({
     updateFormData,
   });
 
+  const { domains, fetchDomains } = useDomains();
+
+  useEffect(() => {
+    fetchDomains();
+  }, [fetchDomains]);
+
+  // Set default domain if no domain is selected and we have domains
+  useEffect(() => {
+    if (!formData.domainId && domains.length > 0 && !service) {
+      const defaultDomain = domains.find(d => d.isDefault) || domains[0];
+      if (defaultDomain) {
+        updateFormData({ domainId: defaultDomain.id });
+      }
+    }
+  }, [domains, formData.domainId, service, updateFormData]);
+
+  // Get the currently selected domain for display
+  const selectedDomain = domains.find(d => d.id === formData.domainId);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
-
-    try {
-      await onSubmit(formData);
-    } finally {
-      setSubmitting(false);
-    }
+    await onSubmit(formData);
   };
 
   const handleCancel = () => {
@@ -106,6 +120,33 @@ export function ServiceForm({
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="domain">Domain</Label>
+                <Select
+                  value={formData.domainId || ""}
+                  onValueChange={(value) => {
+                    // Ignore empty string changes - spurious event from Select component
+                    if (value === "") {
+                      return;
+                    }
+                    updateFormData({ domainId: value });
+                  }}
+                  disabled={submitting || domains.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a domain" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {domains.map((domain) => (
+                      <SelectItem key={domain.id} value={domain.id}>
+                        {domain.name} ({domain.domain})
+                        {domain.isDefault && " - Default"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="subdomain">Subdomain</Label>
                 <div className="flex items-center space-x-2">
                   <Input
@@ -116,7 +157,9 @@ export function ServiceForm({
                     required
                     disabled={submitting}
                   />
-                  <span className="text-sm text-gray-500">.{baseDomain}</span>
+                  <span className="text-sm text-gray-500">
+                    .{selectedDomain?.domain || "domain.com"}
+                  </span>
                 </div>
               </div>
 
