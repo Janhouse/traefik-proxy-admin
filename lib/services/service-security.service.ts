@@ -8,8 +8,9 @@ import type {
   UpdateServiceSecurityConfigRequest,
   SecurityConfig,
 } from "@/lib/dto/service-security.dto";
+import type { HostnameMode } from "@/lib/dto/service.dto";
 import { parseSecurityConfig, parseSecurityConfigWithId } from "@/lib/dto/service-security.dto";
-import type { Service, ServiceSecurityConfig } from "@/lib/db/schema";
+import type { ServiceSecurityConfig } from "@/lib/db/schema";
 
 export class ServiceSecurityService {
 
@@ -139,6 +140,7 @@ export class ServiceSecurityService {
 
     return {
       ...service,
+      hostnameMode: service.hostnameMode as HostnameMode,
       enabledAt: service.enabledAt?.toISOString(),
       middlewares: service.middlewares ?? undefined,
       securityConfigs,
@@ -157,6 +159,7 @@ export class ServiceSecurityService {
 
         return {
           ...service,
+          hostnameMode: service.hostnameMode as HostnameMode,
           enabledAt: service.enabledAt?.toISOString(),
           middlewares: service.middlewares ?? undefined,
           securityConfigs,

@@ -9,7 +9,6 @@ export default function SessionsPage() {
   const {
     sessions,
     loading,
-    expiredSessions,
     fetchSessions,
     deleteSession,
     deleteAllSessions,

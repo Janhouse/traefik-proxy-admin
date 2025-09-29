@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -78,7 +79,6 @@ export function ServiceForm({
   return (
     <UnsavedChangesGuard
       hasUnsavedChanges={hasUnsavedChanges}
-      onDiscard={onCancel}
     >
       <Card>
         <CardHeader>
@@ -147,21 +147,88 @@ export function ServiceForm({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="subdomain">Subdomain</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="subdomain"
-                    value={formData.subdomain}
-                    onChange={(e) => updateFormData({ subdomain: e.target.value })}
-                    placeholder="myservice"
-                    required
+                <Label htmlFor="hostnameMode">Hostname Mode</Label>
+                <Select
+                  value={formData.hostnameMode || "subdomain"}
+                  onValueChange={(value: "subdomain" | "apex" | "custom") => {
+                    updateFormData({
+                      hostnameMode: value,
+                      // Clear subdomain when switching to apex or custom mode
+                      ...(value !== "subdomain" && { subdomain: undefined }),
+                      // Clear custom hostnames when switching away from custom mode
+                      ...(value !== "custom" && { customHostnames: undefined }),
+                    });
+                  }}
+                  disabled={submitting}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select hostname mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="subdomain">Subdomain</SelectItem>
+                    <SelectItem value="apex">Apex Domain</SelectItem>
+                    <SelectItem value="custom">Custom Hostnames</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">
+                  {formData.hostnameMode === "subdomain" && "Service will be accessible at [subdomain]." + (selectedDomain?.domain || "domain.com")}
+                  {formData.hostnameMode === "apex" && "Service will be accessible at " + (selectedDomain?.domain || "domain.com")}
+                  {formData.hostnameMode === "custom" && "Service will be accessible at custom hostnames you specify"}
+                </p>
+              </div>
+
+              {formData.hostnameMode === "subdomain" && (
+                <div className="space-y-2">
+                  <Label htmlFor="subdomain">Subdomain</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="subdomain"
+                      value={formData.subdomain || ""}
+                      onChange={(e) => updateFormData({ subdomain: e.target.value })}
+                      placeholder="myservice"
+                      required
+                      disabled={submitting}
+                    />
+                    <span className="text-sm text-gray-500">
+                      .{selectedDomain?.domain || "domain.com"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {formData.hostnameMode === "custom" && (
+                <div className="space-y-2">
+                  <Label htmlFor="customHostnames">Custom Hostnames</Label>
+                  <Textarea
+                    id="customHostnames"
+                    value={(() => {
+                      try {
+                        return formData.customHostnames
+                          ? JSON.parse(formData.customHostnames).join('\n')
+                          : "";
+                      } catch (error) {
+                        console.warn("Failed to parse custom hostnames:", error);
+                        return formData.customHostnames || "";
+                      }
+                    })()}
+                    onChange={(e) => {
+                      const hostnames = e.target.value
+                        .split('\n')
+                        .map(h => h.trim())
+                        .filter(h => h.length > 0);
+                      updateFormData({
+                        customHostnames: hostnames.length > 0 ? JSON.stringify(hostnames) : null
+                      });
+                    }}
+                    placeholder="app.example.com&#10;api.example.com&#10;www.example.com"
+                    rows={4}
                     disabled={submitting}
                   />
-                  <span className="text-sm text-gray-500">
-                    .{selectedDomain?.domain || "domain.com"}
-                  </span>
+                  <p className="text-xs text-gray-500">
+                    Enter one hostname per line. These hostnames will be used as-is for routing.
+                  </p>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="targetIp">Target IP</Label>
@@ -186,6 +253,20 @@ export function ServiceForm({
                   required
                   disabled={submitting}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="entrypoint">Entrypoint (optional)</Label>
+                <Input
+                  id="entrypoint"
+                  value={formData.entrypoint || ""}
+                  onChange={(e) => updateFormData({ entrypoint: e.target.value || null })}
+                  placeholder="websecure"
+                  disabled={submitting}
+                />
+                <p className="text-xs text-gray-500">
+                  Override the default entrypoint for this service
+                </p>
               </div>
             </div>
 

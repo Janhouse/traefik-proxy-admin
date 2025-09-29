@@ -21,14 +21,12 @@ import {
   Plus,
   X,
   AlertCircle,
-  Clock,
   Users,
   Link,
   Key,
   Info,
   Loader2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { SecurityType, SecurityConfig } from "@/lib/dto/service-security.dto";
 
 interface BasicAuthConfig {
@@ -102,13 +100,11 @@ export function SecurityConfigDialog({
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
-  serviceId,
   editingConfig,
   onSave,
   onCancel,
   hasSharedLink = false,
   hasSso = false,
-  basicAuthCount = 0,
 }: SecurityConfigDialogProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const [basicAuthConfigs, setBasicAuthConfigs] = useState<BasicAuthConfig[]>([]);

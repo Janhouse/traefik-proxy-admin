@@ -84,6 +84,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const user = await BasicAuthService.updateUser(id, updateData);
 
     // Return user without password hash
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { passwordHash: _, ...userResponse } = user;
     return NextResponse.json(userResponse);
   } catch (error) {

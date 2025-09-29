@@ -6,6 +6,7 @@ import { BasicAuthService } from "./services/basic-auth.service";
 import { ServiceSecurityService } from "./services/service-security.service";
 import { TRAEFIK_SESSION_COOKIE } from "./constants";
 import type { Service, Domain } from "@/lib/db/schema";
+import type { CertificateConfig } from "@/lib/dto/domain.dto";
 
 export interface TraefikService {
   loadBalancer: {
@@ -83,10 +84,78 @@ function parseServiceMiddlewares(middlewares: string): string[] {
       // If it's not an array, treat it as a single middleware
       return [parsed];
     }
-  } catch (error) {
+  } catch {
     // If JSON parsing fails, treat it as a plain string (single middleware)
     const trimmed = middlewares.trim();
     return trimmed ? [trimmed] : [];
+  }
+}
+
+/**
+ * Parse certificate configurations from JSON string
+ */
+function parseCertificateConfigs(certificateConfigs: string | null): CertificateConfig[] {
+  if (!certificateConfigs) return [];
+  try {
+    const parsed = JSON.parse(certificateConfigs);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("Failed to parse certificate configs:", error);
+    return [];
+  }
+}
+
+/**
+ * Parse custom hostnames from JSON string
+ */
+function parseCustomHostnames(customHostnames: string | null): string[] {
+  if (!customHostnames) return [];
+  try {
+    const parsed = JSON.parse(customHostnames);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("Failed to parse custom hostnames:", error);
+    return [];
+  }
+}
+
+/**
+ * Generate service identifier based on hostname mode
+ */
+function generateServiceIdentifier(service: Service, domain: Domain): string {
+  switch (service.hostnameMode) {
+    case 'subdomain':
+      return service.subdomain || 'default';
+    case 'apex':
+      return domain.domain.replace(/\./g, '-');
+    case 'custom':
+      // Use first custom hostname or service ID as fallback
+      const customHostnames = parseCustomHostnames(service.customHostnames);
+      const firstHostname = customHostnames[0] || service.id.substring(0, 8);
+      return firstHostname.replace(/\./g, '-');
+    default:
+      return service.subdomain || service.id.substring(0, 8);
+  }
+}
+
+/**
+ * Generate hostnames for a service based on hostname mode
+ */
+function generateServiceHostnames(service: Service, domain: Domain): string[] {
+  switch (service.hostnameMode) {
+    case 'subdomain':
+      if (!service.subdomain) {
+        console.warn(`Service ${service.id} is in subdomain mode but has no subdomain`);
+        return [];
+      }
+      return [`${service.subdomain}.${domain.domain}`];
+    case 'apex':
+      return [domain.domain];
+    case 'custom':
+      return parseCustomHostnames(service.customHostnames);
+    default:
+      console.warn(`Unknown hostname mode: ${service.hostnameMode}`);
+      return [];
   }
 }
 
@@ -95,10 +164,12 @@ function parseServiceMiddlewares(middlewares: string): string[] {
  */
 async function buildServiceMiddlewares(
   service: Service,
+  domain: Domain,
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig
 ): Promise<string[]> {
   const middlewares: string[] = [];
+  const serviceIdentifier = generateServiceIdentifier(service, domain);
 
   // Add global middlewares first
   if (globalConfig.globalMiddlewares.length > 0) {
@@ -116,7 +187,7 @@ async function buildServiceMiddlewares(
       case "shared_link":
       case "sso":
         // Both shared_link and sso use forward auth
-        const authMiddlewareName = `auth-${securityConfig.securityType}-${service.subdomain}`;
+        const authMiddlewareName = `auth-${securityConfig.securityType}-${serviceIdentifier}`;
         config.http.middlewares![authMiddlewareName] = {
           forwardAuth: {
             address: `http://${globalConfig.adminPanelDomain}/api/auth/verify?serviceId=${service.id}&configId=${securityConfig.id}`,
@@ -134,7 +205,7 @@ async function buildServiceMiddlewares(
           const authUsers = await BasicAuthService.getUsersWithHashesByConfigId(configData.basicAuthConfigId);
 
           if (authUsers.length > 0) {
-            const basicAuthMiddlewareName = `basic-auth-${service.subdomain}-${securityConfig.id.substring(0, 8)}`;
+            const basicAuthMiddlewareName = `basic-auth-${serviceIdentifier}-${securityConfig.id.substring(0, 8)}`;
             const userStrings = authUsers.map(user => `${user.username}:${user.passwordHash}`);
 
             config.http.middlewares![basicAuthMiddlewareName] = {
@@ -157,7 +228,7 @@ async function buildServiceMiddlewares(
     try {
       const headers = JSON.parse(service.requestHeaders);
       if (headers && Object.keys(headers).length > 0) {
-        const headersMiddlewareName = `headers-${service.subdomain}`;
+        const headersMiddlewareName = `headers-${serviceIdentifier}`;
         config.http.middlewares![headersMiddlewareName] = {
           headers: {
             customRequestHeaders: headers,
@@ -166,7 +237,7 @@ async function buildServiceMiddlewares(
         middlewares.push(headersMiddlewareName);
       }
     } catch (error) {
-      console.warn(`Failed to parse request headers for service ${service.subdomain}:`, error);
+      console.warn(`Failed to parse request headers for service ${serviceIdentifier}:`, error);
     }
   }
 
@@ -188,9 +259,17 @@ async function createTraefikService(
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig
 ): Promise<void> {
-  const serviceName = `service-${service.subdomain}`;
-  const routerName = `router-${service.subdomain}`;
+  const serviceIdentifier = generateServiceIdentifier(service, domain);
+  const serviceName = `service-${serviceIdentifier}`;
+  const routerName = `router-${serviceIdentifier}`;
   const protocol = service.isHttps ? "https" : "http";
+
+  // Get hostnames for this service
+  const hostnames = generateServiceHostnames(service, domain);
+  if (hostnames.length === 0) {
+    console.warn(`Service ${service.id} has no valid hostnames, skipping`);
+    return;
+  }
 
   // Service configuration
   const serviceConfig: TraefikService = {
@@ -205,7 +284,7 @@ async function createTraefikService(
 
   // Add serversTransport if insecureSkipVerify is enabled for HTTPS services
   if (service.isHttps && service.insecureSkipVerify) {
-    const transportName = `insecure-transport-${service.subdomain}`;
+    const transportName = `insecure-transport-${serviceIdentifier}`;
     serviceConfig.loadBalancer.serversTransport = transportName;
 
     // Ensure serversTransports object exists
@@ -222,28 +301,71 @@ async function createTraefikService(
   config.http.services[serviceName] = serviceConfig;
 
   // Build middlewares
-  const middlewares = await buildServiceMiddlewares(service, globalConfig, config);
+  const middlewares = await buildServiceMiddlewares(service, domain, globalConfig, config);
+
+  // Create router rule for multiple hostnames
+  const hostRules = hostnames.map(hostname => `Host(\`${hostname}\`)`).join(" || ");
+
+  // Determine certificate configuration
+  const tlsConfig = determineTlsConfig(service, domain, hostnames);
+
+  // Determine which entrypoint to use (service-specific or default)
+  const entrypoint = service.entrypoint || globalConfig.defaultEntrypoint;
 
   // Router configuration
-  const fullDomain = `${service.subdomain}.${domain.domain}`;
   const router: TraefikRouter = {
-    rule: `Host(\`${fullDomain}\`)`,
+    rule: hostRules,
     service: serviceName,
     ...(middlewares.length > 0 && { middlewares }),
-    ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
-    tls: {
-      certResolver: domain.certResolver,
-      ...(domain.useWildcardCert && {
-        domains: [
-          {
-            main: domain.domain,
-            sans: [`*.${domain.domain}`],
-          },
-        ],
-      }),
-    },
+    ...(entrypoint && { entryPoints: [entrypoint] }),
+    tls: tlsConfig,
   };
   config.http.routers[routerName] = router;
+}
+
+/**
+ * Determine TLS configuration for a service based on hostname mode and certificate configs
+ */
+function determineTlsConfig(service: Service, domain: Domain, hostnames: string[]): TraefikRouter['tls'] {
+  // If domain uses wildcard certificates and service is in subdomain mode, use wildcard
+  if (domain.useWildcardCert && service.hostnameMode === 'subdomain') {
+    return {
+      certResolver: domain.certResolver,
+      domains: [
+        {
+          main: domain.domain,
+          sans: [`*.${domain.domain}`],
+        },
+      ],
+    };
+  }
+
+  // Check if any certificate configurations match the service hostnames
+  const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
+
+  for (const certConfig of certificateConfigs) {
+    // Check if this certificate covers any of the service hostnames
+    const certDomains = [certConfig.main, ...(certConfig.sans || [])];
+    const hasMatchingDomain = hostnames.some(hostname => certDomains.includes(hostname));
+
+    if (hasMatchingDomain) {
+      return {
+        certResolver: certConfig.certResolver,
+        domains: [
+          {
+            main: certConfig.main,
+            sans: certConfig.sans,
+          },
+        ],
+      };
+    }
+  }
+
+  // Fallback to domain's default certificate resolver without specific domains
+  // This will cause Traefik to automatically request certificates for the hostnames
+  return {
+    certResolver: domain.certResolver,
+  };
 }
 
 /**
@@ -309,6 +431,76 @@ function createWildcardCertTrigger(
 }
 
 /**
+ * Create certificate triggers for specific certificate configurations
+ */
+function createCertificateConfigTriggers(
+  domain: Domain,
+  globalConfig: GlobalTraefikConfig,
+  config: TraefikConfig
+): void {
+  const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
+
+  for (const certConfig of certificateConfigs) {
+    // Create unique names for this certificate config
+    const certConfigSafe = `${certConfig.name.replace(/[^a-zA-Z0-9]/g, '-')}-${certConfig.main.replace(/\./g, '-')}`;
+    const certServiceName = `cert-trigger-${certConfigSafe}`;
+    const certRouterName = `cert-router-${certConfigSafe}`;
+    const replacePathMiddlewareName = `cert-replace-path-${certConfigSafe}`;
+
+    // Create middleware to replace any path with the whitepage endpoint
+    config.http.middlewares![replacePathMiddlewareName] = {
+      replacePath: {
+        path: "/api/static/whitepage",
+      },
+    };
+
+    // Create a simple service that serves the admin panel
+    config.http.services[certServiceName] = {
+      loadBalancer: {
+        servers: [
+          {
+            url: `http://${globalConfig.adminPanelDomain}`,
+          },
+        ],
+      },
+    };
+
+    // Build middlewares for certificate route
+    const certMiddlewares: string[] = [];
+
+    // Add global middlewares first
+    if (globalConfig.globalMiddlewares.length > 0) {
+      certMiddlewares.push(...globalConfig.globalMiddlewares);
+    }
+
+    // Add path replacement middleware
+    certMiddlewares.push(replacePathMiddlewareName);
+
+    // Create host rules for all domains covered by this certificate
+    const certDomains = [certConfig.main, ...(certConfig.sans || [])];
+    const hostRules = certDomains.map(hostname => `Host(\`${hostname}\`)`).join(" || ");
+
+    // Create router for the certificate domains to trigger cert generation
+    const certRouter: TraefikRouter = {
+      rule: hostRules,
+      service: certServiceName,
+      ...(certMiddlewares.length > 0 && { middlewares: certMiddlewares }),
+      ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+      tls: {
+        certResolver: certConfig.certResolver,
+        domains: [
+          {
+            main: certConfig.main,
+            sans: certConfig.sans,
+          },
+        ],
+      },
+    };
+    config.http.routers[certRouterName] = certRouter;
+  }
+}
+
+/**
  * Generate complete Traefik configuration
  */
 export async function generateTraefikConfig(): Promise<TraefikConfig> {
@@ -359,10 +551,17 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     uniqueDomains.set(domain.id, domain);
   }
 
-  // Add wildcard certificate triggers for domains that use wildcard certificates
+  // Add certificate triggers for all domains
   for (const domain of uniqueDomains.values()) {
+    // Add wildcard certificate triggers for domains that use wildcard certificates
     if (domain.useWildcardCert) {
       createWildcardCertTrigger(domain, globalConfig, config);
+    }
+
+    // Add specific certificate configuration triggers
+    const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
+    if (certificateConfigs.length > 0) {
+      createCertificateConfigTriggers(domain, globalConfig, config);
     }
   }
 

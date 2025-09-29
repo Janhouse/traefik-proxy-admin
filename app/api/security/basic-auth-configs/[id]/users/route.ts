@@ -81,6 +81,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     });
 
     // Return user without password hash
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { passwordHash: _, ...userResponse } = user;
     return NextResponse.json(userResponse);
   } catch (error) {

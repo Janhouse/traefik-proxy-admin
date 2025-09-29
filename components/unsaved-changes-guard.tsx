@@ -1,17 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { ConfirmDialog } from "./confirm-dialog";
 
 interface UnsavedChangesGuardProps {
   hasUnsavedChanges: boolean;
-  onDiscard: () => void;
   children: React.ReactNode;
 }
 
 export function UnsavedChangesGuard({
   hasUnsavedChanges,
-  onDiscard,
   children,
 }: UnsavedChangesGuardProps) {
   useEffect(() => {

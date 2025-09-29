@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ServiceService } from "@/lib/services/service.service";
 import { DomainService } from "@/lib/services/domain.service";
+import type { UpdateServiceData, UpdateServiceRequest } from "@/lib/dto/service.dto";
 
 export async function GET(
   request: NextRequest,
@@ -33,7 +34,7 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const body = await request.json();
+    const body: UpdateServiceRequest = await request.json();
 
     // Validate domainId if provided
     if (body.domainId) {
@@ -46,24 +47,22 @@ export async function PUT(
       }
     }
 
-    const updateData: Record<string, unknown> = {
+    const updateData: UpdateServiceData = {
       name: body.name,
-      subdomain: body.subdomain,
+      subdomain: body.subdomain || null,
+      hostnameMode: body.hostnameMode,
+      customHostnames: body.customHostnames ? JSON.stringify(body.customHostnames) : null,
       domainId: body.domainId,
       targetIp: body.targetIp,
       targetPort: body.targetPort,
-      isHttps: body.isHttps,
-      insecureSkipVerify: body.insecureSkipVerify,
-      enabled: body.enabled,
-      middlewares: body.middlewares,
-      requestHeaders: body.requestHeaders,
-      enableDurationMinutes: body.enableDurationMinutes,
+      entrypoint: body.entrypoint || null,
+      isHttps: body.isHttps ?? false,
+      insecureSkipVerify: body.insecureSkipVerify ?? false,
+      enabled: body.enabled ?? true,
+      middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
+      requestHeaders: body.requestHeaders ? JSON.stringify(body.requestHeaders) : null,
+      enableDurationMinutes: body.enableDurationMinutes ?? null,
     };
-
-    // If enabling the service, set enabledAt
-    if (body.enabled) {
-      updateData.enabledAt = new Date();
-    }
 
     const service = await ServiceService.updateService(id, updateData);
 

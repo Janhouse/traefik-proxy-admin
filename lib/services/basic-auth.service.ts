@@ -123,7 +123,8 @@ export class BasicAuthService {
       .where(eq(basicAuthUsers.configId, configId));
 
     // Remove password hash from response
-    return users.map(({ passwordHash, ...user }) => user);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    return users.map(({ passwordHash: _, ...user }) => user);
   }
 
   static async getUserById(id: string): Promise<BasicAuthUserResponse | null> {
@@ -136,7 +137,8 @@ export class BasicAuthService {
       return null;
     }
 
-    const { passwordHash, ...user } = users[0];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { passwordHash: _, ...user } = users[0];
     return user;
   }
 

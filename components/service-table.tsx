@@ -26,10 +26,13 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 export interface Service {
   id: string;
   name: string;
-  subdomain: string;
+  subdomain?: string | null; // Optional, only used when hostname_mode is 'subdomain'
+  hostnameMode: 'subdomain' | 'apex' | 'custom';
+  customHostnames?: string | null; // JSON array of hostnames when hostname_mode is 'custom'
   domainId: string;
   targetIp: string;
   targetPort: number;
+  entrypoint?: string | null;
   isHttps: boolean;
   insecureSkipVerify: boolean;
   enabled: boolean;

@@ -23,7 +23,6 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Plus,
@@ -87,6 +86,7 @@ function SortableCard({ config, onEdit, onDelete, onToggleEnabled }: SortableCar
 export function ServiceSecurityList({ serviceId, serviceName, className }: ServiceSecurityListProps) {
   const [configs, setConfigs] = useState<SecurityConfigWithId[]>([]);
   const [loading, setLoading] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -185,7 +185,7 @@ export function ServiceSecurityList({ serviceId, serviceName, className }: Servi
           )
         );
         setSuccess("Configuration order updated successfully");
-      } catch (err) {
+      } catch {
         setError("Failed to save new order");
         // Revert on error
         fetchConfigs();

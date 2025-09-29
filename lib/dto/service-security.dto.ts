@@ -60,7 +60,9 @@ export interface ServiceSecurityConfigResponse extends ServiceSecurityConfig {
 export interface ServiceWithSecurityResponse {
   id: string;
   name: string;
-  subdomain: string;
+  subdomain?: string | null; // Optional, only used when hostname_mode is 'subdomain'
+  hostnameMode: 'subdomain' | 'apex' | 'custom';
+  customHostnames?: string | null; // JSON array of hostnames when hostname_mode is 'custom'
   targetIp: string;
   targetPort: number;
   isHttps: boolean;
@@ -68,33 +70,40 @@ export interface ServiceWithSecurityResponse {
   enabledAt?: string;
   enableDurationMinutes?: number | null;
   middlewares?: string;
+  requestHeaders?: string | null;
   securityConfigs: SecurityConfig[];
   createdAt: string;
   updatedAt: string;
 }
 
-// Service DTOs (updated)
+// Service DTOs (updated for hostname modes)
 export interface CreateServiceRequest {
   name: string;
-  subdomain: string;
+  subdomain?: string;
+  hostnameMode: 'subdomain' | 'apex' | 'custom';
+  customHostnames?: string[];
   targetIp: string;
   targetPort: number;
   isHttps?: boolean;
   enabled?: boolean;
   enableDurationMinutes?: number | null;
   middlewares?: string;
+  requestHeaders?: Record<string, string>;
   securityConfigs?: CreateServiceSecurityConfigRequest[];
 }
 
 export interface UpdateServiceRequest {
   name?: string;
   subdomain?: string;
+  hostnameMode?: 'subdomain' | 'apex' | 'custom';
+  customHostnames?: string[];
   targetIp?: string;
   targetPort?: number;
   isHttps?: boolean;
   enabled?: boolean;
   enableDurationMinutes?: number | null;
   middlewares?: string;
+  requestHeaders?: Record<string, string>;
 }
 
 // Validation helpers

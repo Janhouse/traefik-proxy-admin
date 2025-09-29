@@ -14,9 +14,12 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
   const getDefaultFormData = useCallback((): ServiceFormData => ({
     name: "",
     subdomain: "",
+    hostnameMode: "subdomain",
+    customHostnames: null,
     domainId: "",
     targetIp: "",
     targetPort: 80,
+    entrypoint: null,
     isHttps: true,
     insecureSkipVerify: false,
     enabled: true,
@@ -34,10 +37,13 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
     if (service) {
       const serviceData: ServiceFormData = {
         name: service.name,
-        subdomain: service.subdomain,
+        subdomain: service.subdomain || "",
+        hostnameMode: service.hostnameMode,
+        customHostnames: service.customHostnames,
         domainId: service.domainId,
         targetIp: service.targetIp,
         targetPort: service.targetPort,
+        entrypoint: service.entrypoint || null,
         isHttps: service.isHttps,
         insecureSkipVerify: service.insecureSkipVerify,
         enabled: service.enabled,

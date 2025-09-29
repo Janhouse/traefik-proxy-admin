@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
       description: body.description || null,
       useWildcardCert: body.useWildcardCert ?? true,
       certResolver: body.certResolver || "letsencrypt",
+      certificateConfigs: body.certificateConfigs ? JSON.stringify(body.certificateConfigs) : null,
       isDefault: body.isDefault ?? false,
     };
 

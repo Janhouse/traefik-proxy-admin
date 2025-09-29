@@ -5,10 +5,24 @@ import type {
   DomainResponse,
   CreateDomainData,
   UpdateDomainData,
+  CertificateConfig,
 } from "@/lib/dto/domain.dto";
 import type { Domain } from "@/lib/db/schema";
 
 export class DomainService {
+  // Helper method to parse certificate configs from JSON string
+  private static parseCertificateConfigs(certificateConfigs: string | null): CertificateConfig[] {
+    if (!certificateConfigs) return [];
+
+    try {
+      const parsed = JSON.parse(certificateConfigs);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn("Failed to parse certificate configs:", error);
+      return [];
+    }
+  }
+
   static async getAllDomains(): Promise<DomainResponse[]> {
     const allDomains = await db.select().from(domains);
 
@@ -23,6 +37,7 @@ export class DomainService {
         return {
           ...domain,
           serviceCount: serviceCountResult[0]?.count || 0,
+          parsedCertificateConfigs: this.parseCertificateConfigs(domain.certificateConfigs),
         };
       })
     );
@@ -51,6 +66,7 @@ export class DomainService {
     return {
       ...domain,
       serviceCount: serviceCountResult[0]?.count || 0,
+      parsedCertificateConfigs: this.parseCertificateConfigs(domain.certificateConfigs),
     };
   }
 
@@ -75,7 +91,12 @@ export class DomainService {
 
     const result = await db
       .insert(domains)
-      .values(data)
+      .values({
+        ...data,
+        certificateConfigs: data.certificateConfigs && data.certificateConfigs.length > 0
+          ? JSON.stringify(data.certificateConfigs)
+          : null,
+      })
       .returning();
 
     return result[0];
@@ -104,6 +125,9 @@ export class DomainService {
       .update(domains)
       .set({
         ...data,
+        certificateConfigs: data.certificateConfigs && data.certificateConfigs.length > 0
+          ? JSON.stringify(data.certificateConfigs)
+          : null,
         updatedAt: new Date(),
       })
       .where(eq(domains.id, id))

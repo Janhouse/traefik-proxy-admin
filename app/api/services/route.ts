@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NewService } from "@/lib/db";
 import { ServiceService } from "@/lib/services/service.service";
 import { DomainService } from "@/lib/services/domain.service";
+import type { CreateServiceData, CreateServiceRequest } from "@/lib/dto/service.dto";
 import "@/lib/startup"; // Initialize background services
 
 export async function GET() {
@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body: CreateServiceRequest = await request.json();
 
     // Validate domainId or get default domain
     let domainId = body.domainId;
@@ -43,20 +43,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const newService: NewService = {
+    const newService: CreateServiceData = {
       name: body.name,
-      subdomain: body.subdomain,
+      subdomain: body.subdomain || null,
+      hostnameMode: body.hostnameMode,
+      customHostnames: body.customHostnames ? JSON.stringify(body.customHostnames) : null,
       domainId: domainId,
       targetIp: body.targetIp,
       targetPort: body.targetPort,
-      isHttps: body.isHttps || false,
-      insecureSkipVerify: body.insecureSkipVerify || false,
-      enabled: body.enabled !== undefined ? body.enabled : true,
-      enabledAt: (body.enabled !== false) ? new Date() : undefined, // Set enabledAt if service is enabled
-      enableDurationMinutes: body.enableDurationMinutes,
-      middlewares: body.middlewares,
-      requestHeaders: body.requestHeaders,
-      updatedAt: new Date(),
+      entrypoint: body.entrypoint || null,
+      isHttps: body.isHttps ?? false,
+      insecureSkipVerify: body.insecureSkipVerify ?? false,
+      enabled: body.enabled ?? true,
+      enableDurationMinutes: body.enableDurationMinutes ?? null,
+      middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
+      requestHeaders: body.requestHeaders ? JSON.stringify(body.requestHeaders) : null,
     };
 
     const service = await ServiceService.createService(newService);

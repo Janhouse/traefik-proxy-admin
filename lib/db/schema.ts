@@ -24,6 +24,7 @@ export const domains = pgTable("domains", {
   description: text("description"),
   useWildcardCert: boolean("use_wildcard_cert").default(true).notNull(),
   certResolver: varchar("cert_resolver", { length: 255 }).notNull().default("letsencrypt"),
+  certificateConfigs: text("certificate_configs"), // JSON array of certificate configurations
   isDefault: boolean("is_default").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -32,10 +33,13 @@ export const domains = pgTable("domains", {
 export const services = pgTable("services", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 255 }).notNull(),
-  subdomain: varchar("subdomain", { length: 255 }).notNull(),
+  subdomain: varchar("subdomain", { length: 255 }), // Now optional, only used when hostname_mode is 'subdomain'
+  hostnameMode: varchar("hostname_mode", { length: 20 }).default("subdomain").notNull(), // 'subdomain', 'apex', 'custom'
+  customHostnames: text("custom_hostnames"), // JSON array of hostnames when hostname_mode is 'custom'
   domainId: uuid("domain_id").references(() => domains.id, { onDelete: "restrict" }).notNull(),
   targetIp: varchar("target_ip", { length: 45 }).notNull(),
   targetPort: integer("target_port").notNull(),
+  entrypoint: varchar("entrypoint", { length: 255 }), // Optional per-service entrypoint override
   isHttps: boolean("is_https").default(false).notNull(),
   insecureSkipVerify: boolean("insecure_skip_verify").default(false).notNull(), // Skip TLS certificate validation for target service
   enabled: boolean("enabled").default(true).notNull(),

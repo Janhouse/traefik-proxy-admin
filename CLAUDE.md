@@ -139,7 +139,6 @@ See README.md for detailed setup instructions.
 ### Global Configuration
 ```json
 {
-  "baseDomain": "exposed.example.com",
   "certResolver": "letsencrypt-dns",
   "globalMiddlewares": ["compression", "security-headers", "rate-limit"]
 }
@@ -159,3 +158,116 @@ providers:
 This configures Traefik to poll the admin panel for dynamic configuration updates.
 
 Project uses pnpm instead of npm
+
+## React Form State Best Practices
+
+This project has encountered recurring issues with form components (especially Select dropdowns) not displaying their selected values correctly. Based on fixes applied in commits `4552b2a` (Fix auto disable selection) and `2d2c181` (Host header override), follow these patterns to prevent form state issues:
+
+### Common Form State Problems
+
+1. **Select Components Not Showing Selected Values**: Dropdowns appear blank even when form data has correct values
+2. **Race Conditions**: Form initializes before data is loaded, causing mismatched state
+3. **Value Type Mismatches**: UI expects strings, backend provides null/undefined, causing rendering issues
+
+### Proven Solutions
+
+#### 1. Use `useCallback` for Default Data Creation
+
+**❌ Wrong:**
+```typescript
+const defaultFormData: ServiceFormData = {
+  name: "",
+  enableDurationMinutes: defaultDuration || null,
+  domainId: "",
+};
+```
+
+**✅ Correct:**
+```typescript
+const getDefaultFormData = useCallback((): ServiceFormData => ({
+  name: "",
+  enableDurationMinutes: defaultDuration ?? null,  // Use ?? instead of ||
+  domainId: "",
+}), [defaultDuration]);  // Include dependencies
+```
+
+#### 2. Handle Select Component Value Mapping
+
+**❌ Wrong:**
+```typescript
+<Select
+  value={formData.enableDurationMinutes?.toString() || "null"}
+  onValueChange={(value) => {
+    const duration = value === "null" ? null : parseInt(value);
+    setFormData({ ...formData, enableDurationMinutes: duration });
+  }}
+>
+```
+
+**✅ Correct:**
+```typescript
+<Select
+  value={formData.enableDurationMinutes === null || isNaN(formData.enableDurationMinutes as number)
+    ? "forever"
+    : formData.enableDurationMinutes?.toString() || "forever"}
+  onValueChange={(value) => {
+    // Ignore empty string changes - spurious event from Select component
+    if (value === "") {
+      return;
+    }
+
+    let duration: number | null;
+    if (value === "forever") {
+      duration = null;
+    } else {
+      const parsed = parseInt(value);
+      duration = isNaN(parsed) ? null : parsed;
+    }
+    setFormData({ ...formData, enableDurationMinutes: duration });
+  }}
+>
+```
+
+#### 3. Handle Async Data Dependencies
+
+**❌ Wrong:**
+```typescript
+<Select
+  value={formData.domainId}
+  disabled={submitting}
+>
+```
+
+**✅ Correct:**
+```typescript
+<Select
+  value={formData.domainId || ""}
+  disabled={submitting || domains.length === 0}  // Disable until data loads
+  onValueChange={(value) => {
+    // Ignore spurious empty string events
+    if (value === "") {
+      return;
+    }
+    updateFormData({ domainId: value });
+  }}
+>
+```
+
+### Key Principles
+
+1. **Always handle empty string events**: Select components emit spurious `""` values, ignore them
+2. **Map null/undefined to UI-friendly strings**: Use "forever", "none", etc. for display
+3. **Use `??` instead of `||`**: Proper null coalescing prevents `0` and `false` issues
+4. **Disable components during loading**: Prevent interaction until required data is available
+5. **Use proper dependencies in useCallback/useEffect**: Ensure fresh data when dependencies change
+6. **Handle async timing**: Don't assume data is available when components render
+
+### Testing Form State
+
+Always test these scenarios:
+- Fresh page load (new item creation)
+- Edit existing items (form population)
+- Data loading states (async dependencies)
+- Edge cases (null, undefined, empty string values)
+
+Following these patterns will prevent the recurring form state issues this project has experienced.

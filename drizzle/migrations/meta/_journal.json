@@ -50,6 +50,20 @@
       "when": 1757847705645,
       "tag": "0006_large_chameleon",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1757856778903,
+      "tag": "0007_freezing_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1759183047180,
+      "tag": "0008_daffy_jetstream",
+      "breakpoints": true
     }
   ]
 }
