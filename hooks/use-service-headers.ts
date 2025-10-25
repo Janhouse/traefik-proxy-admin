@@ -20,15 +20,15 @@ export function useServiceHeaders({ formData, updateFormData }: UseServiceHeader
     let existingHostHeader = "";
     if (formData.requestHeaders) {
       try {
-        let headers: any = formData.requestHeaders;
+        let headers: string | Record<string, string> = formData.requestHeaders;
 
         // Parse the JSON string from database
         if (typeof headers === "string") {
-          headers = JSON.parse(headers);
+          headers = JSON.parse(headers) as Record<string, string>;
 
           // Handle corrupted double-stringified data from the bug
           if (typeof headers === "string") {
-            headers = JSON.parse(headers);
+            headers = JSON.parse(headers) as Record<string, string>;
           }
         }
 
@@ -65,8 +65,8 @@ export function useServiceHeaders({ formData, updateFormData }: UseServiceHeader
 
     // Pass object directly (or empty string if no headers)
     // API will handle JSON.stringify() - don't double-stringify!
-    const headersData = Object.keys(headers).length > 0 ? headers : "";
-    updateFormData({ requestHeaders: headersData as any });
+    const headersData: string | Record<string, string> = Object.keys(headers).length > 0 ? headers : "";
+    updateFormData({ requestHeaders: headersData as string });
   };
 
   // Custom setter that updates both state and form data

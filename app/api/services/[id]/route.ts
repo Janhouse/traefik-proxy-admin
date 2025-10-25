@@ -60,7 +60,9 @@ export async function PUT(
       insecureSkipVerify: body.insecureSkipVerify ?? false,
       enabled: body.enabled ?? true,
       middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
-      requestHeaders: body.requestHeaders ? JSON.stringify(body.requestHeaders) : null,
+      requestHeaders: body.requestHeaders
+        ? (typeof body.requestHeaders === 'string' ? body.requestHeaders : JSON.stringify(body.requestHeaders))
+        : null,
       enableDurationMinutes: body.enableDurationMinutes ?? null,
     };
 

@@ -226,8 +226,14 @@ async function buildServiceMiddlewares(
   // Add request headers middleware if service has custom headers
   if (service.requestHeaders) {
     try {
-      const headers = JSON.parse(service.requestHeaders);
-      if (headers && Object.keys(headers).length > 0) {
+      let headers = JSON.parse(service.requestHeaders);
+
+      // Handle double-stringified data (bug fix - can be removed after DB migration)
+      if (typeof headers === 'string') {
+        headers = JSON.parse(headers);
+      }
+
+      if (headers && typeof headers === 'object' && Object.keys(headers).length > 0) {
         const headersMiddlewareName = `headers-${serviceIdentifier}`;
         config.http.middlewares![headersMiddlewareName] = {
           headers: {

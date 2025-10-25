@@ -57,7 +57,9 @@ export async function POST(request: NextRequest) {
       enabled: body.enabled ?? true,
       enableDurationMinutes: body.enableDurationMinutes ?? null,
       middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
-      requestHeaders: body.requestHeaders ? JSON.stringify(body.requestHeaders) : null,
+      requestHeaders: body.requestHeaders
+        ? (typeof body.requestHeaders === 'string' ? body.requestHeaders : JSON.stringify(body.requestHeaders))
+        : null,
     };
 
     const service = await ServiceService.createService(newService);
