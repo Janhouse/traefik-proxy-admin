@@ -8,8 +8,9 @@ on:
         required: false
         default: false
         type: boolean
-      custom_tag:
-        description: 'Custom tag for the image (optional)'
+      custom_tags:
+        # Comma-separated list of tags to push (e.g., "v1.2,v1.2.1,latest")
+        description: 'Custom tags for the image (comma-separated, e.g., v1.2,v1.2.1)'
         required: false
         type: string
 
@@ -55,19 +56,37 @@ jobs:
           
           # Push to GitHub
           docker push "${TARGET_IMAGE}"
-      - name: Tag and push custom tag to GitHub Container Registry
-        if: ${{ github.event.inputs.push_to_github == 'true' && github.event.inputs.custom_tag != '' }}
+      - name: Tag and push custom tags to GitHub Container Registry
+        if: ${{ github.event.inputs.push_to_github == 'true' && github.event.inputs.custom_tags != '' }}
         env:
           REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
           REPOSITORY_IMAGE_PUBLIC: ${{ vars.REPOSITORY_IMAGE_PUBLIC }}
-          CUSTOM_TAG: ${{ github.event.inputs.custom_tag }}
+          CUSTOM_TAGS: ${{ github.event.inputs.custom_tags }}
         run: |
           # Get the base image name from REPOSITORY_IMAGE_PUBLIC (remove any existing tag)
           BASE_IMAGE=$(echo "${REPOSITORY_IMAGE_PUBLIC}" | cut -d':' -f1)
-          
-          # Tag with custom tag
-          CUSTOM_TARGET="${BASE_IMAGE}:${CUSTOM_TAG}"
-          docker tag "${REPOSITORY_IMAGE}" "${CUSTOM_TARGET}"
-          
-          # Push custom tagged image
-          docker push "${CUSTOM_TARGET}"
+
+          # Split comma-separated tags and push each
+          IFS=',' read -ra TAGS <<< "${CUSTOM_TAGS}"
+          for TAG in "${TAGS[@]}"; do
+            TAG=$(echo "$TAG" | xargs)  # Trim whitespace
+            if [ -n "$TAG" ]; then
+              echo "Tagging and pushing: ${BASE_IMAGE}:${TAG}"
+              docker tag "${REPOSITORY_IMAGE}" "${BASE_IMAGE}:${TAG}"
+              docker push "${BASE_IMAGE}:${TAG}"
+            fi
+          done
+      - name: Create build metadata
+        run: |
+          cat > build-metadata.json << EOF
+          {
+            "pushed_to_github": "${{ github.event.inputs.push_to_github || 'false' }}",
+            "custom_tags": "${{ github.event.inputs.custom_tags || '' }}"
+          }
+          EOF
+      - name: Upload build metadata
+        uses: https://github.com/Janhouse/gitea-upload-artifact@v4
+        with:
+          name: build-metadata
+          path: build-metadata.json
+          retention-days: 1

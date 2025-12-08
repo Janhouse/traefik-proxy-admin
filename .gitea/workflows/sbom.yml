@@ -1,0 +1,214 @@
+name: SBOM Generation
+run-name: ${{ gitea.actor }} is generating SBOM 📋
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_github:
+        # Set to true to also upload github-latest SBOM
+        description: 'Also upload SBOM for github-latest version'
+        required: false
+        default: false
+        type: boolean
+      custom_tags:
+        # Comma-separated list of version tags to update (e.g., "v1.2,v1.2.1")
+        description: 'Custom version tags to upload SBOM for (comma-separated)'
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["Build and push container to registry"]
+    types:
+      - completed
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    # Run on manual trigger OR if the build workflow succeeded
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+
+      - name: Pull container image
+        env:
+          REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
+        run: docker pull ${REPOSITORY_IMAGE}
+
+      - name: Download build metadata
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: https://github.com/Janhouse/gitea-download-artifact@v4
+        with:
+          name: build-metadata
+          github-token: ${{ secrets.ACTIONS_GITEA_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+        continue-on-error: true
+
+      - name: Parse build metadata
+        id: metadata
+        env:
+          # Manual inputs (empty if triggered by workflow_run)
+          MANUAL_INCLUDE_GITHUB: ${{ github.event.inputs.include_github || '' }}
+          MANUAL_CUSTOM_TAGS: ${{ github.event.inputs.custom_tags || '' }}
+        run: |
+          # Start with manual input values (for workflow_dispatch)
+          PUSHED_TO_GITHUB="${MANUAL_INCLUDE_GITHUB:-false}"
+          CUSTOM_TAGS="${MANUAL_CUSTOM_TAGS}"
+
+          # Override with artifact values if present (for workflow_run)
+          if [ -f build-metadata.json ]; then
+            PUSHED_TO_GITHUB=$(jq -r '.pushed_to_github // "false"' build-metadata.json)
+            ARTIFACT_TAGS=$(jq -r '.custom_tags // ""' build-metadata.json)
+            # Artifact tags take precedence for automated runs
+            if [ -n "$ARTIFACT_TAGS" ]; then
+              CUSTOM_TAGS="$ARTIFACT_TAGS"
+            fi
+          fi
+
+          echo "pushed_to_github=${PUSHED_TO_GITHUB}" >> $GITHUB_OUTPUT
+          echo "custom_tags=${CUSTOM_TAGS}" >> $GITHUB_OUTPUT
+          echo "Resolved: pushed_to_github=${PUSHED_TO_GITHUB}, custom_tags=${CUSTOM_TAGS}"
+
+      - name: Cache tools
+        id: cache-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin
+          key: sbom-tools-${{ runner.os }}-syft-v1.18.1-cyclonedx-v0.27.1
+
+      - name: Install Syft
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ~/.local/bin v1.18.1
+
+      - name: Install CycloneDX CLI
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.27.1/cyclonedx-linux-x64 -o ~/.local/bin/cyclonedx-cli
+          chmod +x ~/.local/bin/cyclonedx-cli
+
+      - name: Add tools to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Generate SBOM for container (OS packages only)
+        env:
+          REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
+        run: |
+          syft ${REPOSITORY_IMAGE} \
+            --exclude '/app/**' \
+            --output cyclonedx-json=container-sbom.json
+
+      - name: Checkout matching git tag if available
+        id: checkout-tag
+        env:
+          CUSTOM_TAGS: ${{ steps.metadata.outputs.custom_tags }}
+        run: |
+          # Save current ref to restore later
+          ORIGINAL_REF=$(git rev-parse HEAD)
+          echo "original_ref=${ORIGINAL_REF}" >> $GITHUB_OUTPUT
+
+          # If custom tags are specified, try to find and checkout a matching git tag
+          if [ -n "${CUSTOM_TAGS}" ]; then
+            IFS=',' read -ra TAGS <<< "${CUSTOM_TAGS}"
+            for TAG in "${TAGS[@]}"; do
+              TAG=$(echo "$TAG" | xargs)  # Trim whitespace
+              if [ -n "$TAG" ]; then
+                # Check if this tag exists as a git tag
+                if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+                  echo "Found matching git tag: ${TAG}"
+                  git checkout "refs/tags/${TAG}"
+                  echo "checked_out_tag=${TAG}" >> $GITHUB_OUTPUT
+                  break
+                fi
+              fi
+            done
+          fi
+
+          if [ -z "$(git rev-parse --verify HEAD 2>/dev/null)" ]; then
+            echo "No matching git tag found, staying on original ref"
+          fi
+
+      - name: Generate SBOM for source code (npm deps from lockfile)
+        run: |
+          syft dir:. \
+            --output cyclonedx-json=source-sbom.json
+
+      - name: Restore original git ref
+        if: ${{ steps.checkout-tag.outputs.checked_out_tag != '' }}
+        run: |
+          git checkout ${{ steps.checkout-tag.outputs.original_ref }}
+
+      - name: Merge SBOMs
+        run: |
+          cyclonedx-cli merge \
+            --input-files container-sbom.json source-sbom.json \
+            --output-file merged-sbom.json \
+            --output-format json
+
+      - name: Determine version tag
+        id: version
+        run: |
+          VERSION=$(git describe --exact-match --tags 2>/dev/null || git rev-parse --short HEAD)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version tag: ${VERSION}"
+
+      - name: Upload SBOM to DependencyTrack (all versions)
+        env:
+          DTRACK_URL: ${{ secrets.DEPENDENCY_TRACK_URL }}
+          DTRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
+          PROJECT_NAME: ${{ secrets.DEPENDENCY_TRACK_PROJECT_NAME }}
+          PUSHED_TO_GITHUB: ${{ steps.metadata.outputs.pushed_to_github }}
+          CUSTOM_TAGS: ${{ steps.metadata.outputs.custom_tags }}
+          GIT_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          upload_sbom() {
+            local VERSION=$1
+            echo "Uploading SBOM for version: ${VERSION}"
+
+            BOM_BASE64=$(base64 -w 0 merged-sbom.json)
+            cat > payload.json << EOF
+          {
+            "projectName": "${PROJECT_NAME}",
+            "projectVersion": "${VERSION}",
+            "autoCreate": true,
+            "projectTags": [{"name": "${GIT_TAG}"}],
+            "bom": "${BOM_BASE64}"
+          }
+          EOF
+
+            curl -X PUT "${DTRACK_URL}/api/v1/bom" \
+              -H "X-Api-Key: ${DTRACK_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d @payload.json
+
+            rm payload.json
+            echo ""
+          }
+
+          # Always upload gitea-latest
+          upload_sbom "gitea-latest"
+
+          # Upload github-latest if pushed to GitHub
+          if [ "${PUSHED_TO_GITHUB}" = "true" ]; then
+            upload_sbom "github-latest"
+          fi
+
+          # Upload each custom tag
+          if [ -n "${CUSTOM_TAGS}" ]; then
+            IFS=',' read -ra TAGS <<< "${CUSTOM_TAGS}"
+            for TAG in "${TAGS[@]}"; do
+              TAG=$(echo "$TAG" | xargs)
+              if [ -n "$TAG" ]; then
+                upload_sbom "${TAG}"
+              fi
+            done
+          fi
+
+          echo "All SBOM uploads completed"
