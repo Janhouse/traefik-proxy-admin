@@ -323,7 +323,7 @@ async function createTraefikService(
     rule: hostRules,
     service: serviceName,
     ...(middlewares.length > 0 && { middlewares }),
-    ...(entrypoint && { entryPoints: [entrypoint] }),
+    ...(entrypoint && { entryPoints: [...entrypoint.split(',')] }),
     tls: tlsConfig,
   };
   config.http.routers[routerName] = router;
@@ -422,7 +422,7 @@ function createWildcardCertTrigger(
     rule: `Host(\`${domain.domain}\`)`,
     service: wildcardServiceName,
     ...(wildcardMiddlewares.length > 0 && { middlewares: wildcardMiddlewares }),
-    ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+    ...(globalConfig.defaultEntrypoint && { entryPoints: [...globalConfig.defaultEntrypoint.split(',')] }),
     tls: {
       certResolver: domain.certResolver,
       domains: [
@@ -491,7 +491,7 @@ function createCertificateConfigTriggers(
       rule: hostRules,
       service: certServiceName,
       ...(certMiddlewares.length > 0 && { middlewares: certMiddlewares }),
-      ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+      ...(globalConfig.defaultEntrypoint && { entryPoints: [...globalConfig.defaultEntrypoint.split(',')] }),
       tls: {
         certResolver: certConfig.certResolver,
         domains: [
