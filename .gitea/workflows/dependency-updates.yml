@@ -1,0 +1,16 @@
+name: Dependency updates
+run-name: Weekly dependency update by ${{ gitea.actor }} 📦
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update:
+    uses: https://git.janhouse.lv/janhouse/gitea-bun-deps-update/.gitea/workflows/run.yml@main
+    with:
+      base-branch: main
+    secrets:
+      BOT_TOKEN: ${{ secrets.DEPS_BOT_TOKEN }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
