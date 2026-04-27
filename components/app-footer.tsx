@@ -1,6 +1,6 @@
 "use client";
 
-import { Github, Heart } from "lucide-react";
+import { Code2, Heart } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function AppFooter() {
@@ -31,7 +31,7 @@ export function AppFooter() {
               rel="noopener noreferrer"
               className="flex items-center gap-2 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
             >
-              <Github className="h-4 w-4" />
+              <Code2 className="h-4 w-4" />
               <span>Source Code</span>
             </a>
 
