@@ -10,6 +10,7 @@ jobs:
     uses: https://git.janhouse.lv/janhouse/gitea-bun-deps-update/.gitea/workflows/run.yml@main
     with:
       base-branch: main
+      monitor-ci: true
     secrets:
       BOT_TOKEN: ${{ secrets.DEPS_BOT_TOKEN }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
