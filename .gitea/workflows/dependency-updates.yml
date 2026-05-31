@@ -10,6 +10,7 @@ jobs:
     uses: https://git.janhouse.lv/janhouse/gitea-pnpm-deps-update/.gitea/workflows/run.yml@c5d1654e15454d56af8609633fdb86ded9356804
     with:
       base-branch: main
+      pnpm-version: '10'
       monitor-ci: true
     secrets:
       BOT_TOKEN: ${{ secrets.DEPS_BOT_TOKEN }}
