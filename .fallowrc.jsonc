@@ -4,6 +4,14 @@
   // components/ui/** is vendored shadcn/ui: treat as entry surface so its full
   // API is not flagged unused while its imports still count as used deps.
   "entry": ["components/ui/**"],
+  // Build/CLI-only dependencies that fallow flags as "test-only" because they
+  // are referenced from config files, not application source:
+  //   - drizzle-kit: invoked via the db:* package.json scripts and imported by
+  //     drizzle.config.ts (migration/CLI tooling).
+  //   - tailwindcss-animate: a Tailwind plugin loaded from tailwind.config.ts.
+  //   - eslint-config-next: consumed via compat.extends("next/...") string refs
+  //     in eslint.config.mjs, which static analysis cannot resolve.
+  "ignoreDependencies": ["drizzle-kit", "tailwindcss-animate", "eslint-config-next"],
   "duplicates": {
     "minOccurrences": 3
   },
