@@ -4,6 +4,17 @@
   // components/ui/** is vendored shadcn/ui: treat as entry surface so its full
   // API is not flagged unused while its imports still count as used deps.
   "entry": ["components/ui/**"],
+  // Implicitly-used deps that static analysis can't see:
+  // - eslint-config-next: pulled in via string config in eslint.config.mjs
+  //   (compat.extends("next/core-web-vitals", "next/typescript")).
+  // - drizzle-kit: invoked as a CLI in package.json db:* scripts and imported
+  //   by drizzle.config.ts (defineConfig), which instrumentation.ts depends on.
+  // - tailwindcss-animate: loaded as a Tailwind plugin in tailwind.config.ts.
+  "ignoreDependencies": [
+    "eslint-config-next",
+    "drizzle-kit",
+    "tailwindcss-animate"
+  ],
   "duplicates": {
     "minOccurrences": 3
   },
