@@ -1,7 +1,6 @@
 import "server-only";
 import { db, appConfig } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { DURATION_PRESETS } from "./duration-presets";
 
 export interface GlobalTraefikConfig {
   globalMiddlewares: string[];
@@ -10,14 +9,11 @@ export interface GlobalTraefikConfig {
   defaultEnableDurationMinutes?: number; // null/undefined = forever, number = minutes
 }
 
-export const DEFAULT_CONFIG: GlobalTraefikConfig = {
+const DEFAULT_CONFIG: GlobalTraefikConfig = {
   globalMiddlewares: [],
   adminPanelDomain: "localhost:3000",
   defaultEnableDurationMinutes: 720, // Default to 12 hours (720 minutes)
 };
-
-// Re-export for server-side use
-export { DURATION_PRESETS };
 
 export async function getGlobalConfig(): Promise<GlobalTraefikConfig> {
   try {

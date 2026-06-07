@@ -1,5 +1,3 @@
-import type { Service } from "@/lib/db/schema";
-
 // Hostname mode types
 export type HostnameMode = 'subdomain' | 'apex' | 'custom';
 
@@ -36,13 +34,6 @@ export interface UpdateServiceRequest {
   enableDurationMinutes?: number | null;
   middlewares?: string[];
   requestHeaders?: Record<string, string>;
-}
-
-// Response DTOs
-export interface ServiceResponse extends Service {
-  parsedCustomHostnames?: string[]; // Parsed from JSON string
-  parsedMiddlewares?: string[]; // Parsed from JSON string
-  parsedRequestHeaders?: Record<string, string>; // Parsed from JSON string
 }
 
 // Service DTOs (internal)

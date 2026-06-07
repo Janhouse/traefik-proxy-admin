@@ -30,25 +30,6 @@ export async function getSSOConfig(): Promise<SSOConfig> {
   return JSON.parse(configs[0].value);
 }
 
-export async function updateSSOConfig(config: SSOConfig): Promise<void> {
-  const configValue = JSON.stringify(config);
-  
-  await db
-    .insert(appConfig)
-    .values({
-      key: "sso_config",
-      value: configValue,
-      description: "SSO Identity Provider Configuration",
-    })
-    .onConflictDoUpdate({
-      target: appConfig.key,
-      set: {
-        value: configValue,
-        updatedAt: new Date(),
-      },
-    });
-}
-
 export function generateSSOAuthUrl(config: SSOConfig, state: string): string {
   const params = new URLSearchParams({
     response_type: "code",
