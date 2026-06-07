@@ -2,7 +2,7 @@ import { db, sharedLinks, SharedLink } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
-export function generateShareToken(): string {
+function generateShareToken(): string {
   return randomBytes(32).toString("hex");
 }
 
@@ -26,7 +26,7 @@ export async function createSharedLink(
   return sharedLink;
 }
 
-export async function getSharedLink(token: string): Promise<SharedLink | null> {
+async function getSharedLink(token: string): Promise<SharedLink | null> {
   const [sharedLink] = await db
     .select()
     .from(sharedLinks)

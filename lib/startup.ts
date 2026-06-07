@@ -3,7 +3,7 @@ import { serviceScheduler } from "./service-scheduler";
 
 let isInitialized = false;
 
-export async function initializeServices() {
+async function initializeServices() {
   if (isInitialized) {
     return;
   }
@@ -19,16 +19,6 @@ export async function initializeServices() {
   } catch (error) {
     console.error("Failed to initialize application services:", error);
   }
-}
-
-// Cleanup function for graceful shutdown
-export function shutdownServices() {
-  console.log("Shutting down application services...");
-  
-  serviceScheduler.stop();
-  
-  isInitialized = false;
-  console.log("Application services shut down");
 }
 
 // Auto-initialize when this module is imported

@@ -76,36 +76,6 @@ export interface ServiceWithSecurityResponse {
   updatedAt: string;
 }
 
-// Service DTOs (updated for hostname modes)
-export interface CreateServiceRequest {
-  name: string;
-  subdomain?: string;
-  hostnameMode: 'subdomain' | 'apex' | 'custom';
-  customHostnames?: string[];
-  targetIp: string;
-  targetPort: number;
-  isHttps?: boolean;
-  enabled?: boolean;
-  enableDurationMinutes?: number | null;
-  middlewares?: string;
-  requestHeaders?: Record<string, string>;
-  securityConfigs?: CreateServiceSecurityConfigRequest[];
-}
-
-export interface UpdateServiceRequest {
-  name?: string;
-  subdomain?: string;
-  hostnameMode?: 'subdomain' | 'apex' | 'custom';
-  customHostnames?: string[];
-  targetIp?: string;
-  targetPort?: number;
-  isHttps?: boolean;
-  enabled?: boolean;
-  enableDurationMinutes?: number | null;
-  middlewares?: string;
-  requestHeaders?: Record<string, string>;
-}
-
 // Validation helpers
 export function parseSecurityConfig(securityConfig: ServiceSecurityConfig): SecurityConfig {
   const baseConfig = {
