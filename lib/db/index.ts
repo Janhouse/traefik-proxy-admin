@@ -3,11 +3,6 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
 
-// Type exports for better TypeScript support
-export type Database = typeof db;
-export type DatabaseSchema = typeof schema;
-export type ConnectionClient = Pool;
-
 const connectionString =
   process.env.DATABASE_URL ||
   "postgresql://admin:password@localhost:5432/traefik_share";
@@ -24,13 +19,3 @@ const pool = new Pool({
 export const db = drizzle({ client: pool, schema });
 
 export * from "./schema";
-
-// Graceful shutdown function
-export async function closeDatabase() {
-  try {
-    await pool.end();
-    console.log("Database connection pool closed gracefully");
-  } catch (error) {
-    console.error("Error closing database connection pool:", error);
-  }
-}

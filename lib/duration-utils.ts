@@ -3,26 +3,9 @@
  */
 
 /**
- * Get the effective duration for a service, handling undefined/null cases
- */
-export function getEffectiveDuration(
-  serviceDurationMinutes: number | null | undefined,
-  defaultDurationMinutes: number | null | undefined
-): number | null {
-  console.log("getEffectiveDuration - serviceDurationMinutes:", serviceDurationMinutes, "defaultDurationMinutes:", defaultDurationMinutes);
-  if (serviceDurationMinutes === undefined) {
-    const result = defaultDurationMinutes ?? null;
-    console.log("getEffectiveDuration - returning default:", result);
-    return result;
-  }
-  console.log("getEffectiveDuration - returning service:", serviceDurationMinutes);
-  return serviceDurationMinutes;
-}
-
-/**
  * Calculate the expiry time for a service
  */
-export function calculateExpiryTime(
+function calculateExpiryTime(
   enabledAt: string | Date,
   durationMinutes: number | null | undefined
 ): Date | null {
@@ -62,11 +45,4 @@ export function formatDurationRemaining(
   const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
   
   return `${hours}h ${minutes}m ${seconds}s`;
-}
-
-/**
- * Check if a service duration represents "forever"
- */
-export function isForeverDuration(durationMinutes: number | null | undefined): boolean {
-  return durationMinutes === null;
 }

@@ -38,13 +38,6 @@ export interface UpdateServiceRequest {
   requestHeaders?: Record<string, string>;
 }
 
-// Response DTOs
-export interface ServiceResponse extends Service {
-  parsedCustomHostnames?: string[]; // Parsed from JSON string
-  parsedMiddlewares?: string[]; // Parsed from JSON string
-  parsedRequestHeaders?: Record<string, string>; // Parsed from JSON string
-}
-
 // Service DTOs (internal)
 export interface CreateServiceData {
   name: string;
