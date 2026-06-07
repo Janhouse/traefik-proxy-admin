@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "fallow": {
+      "source": "fallow-rs/fallow-skills",
+      "sourceType": "github",
+      "skillPath": "fallow/skills/fallow/SKILL.md",
+      "computedHash": "e08db6e5ec639ea7fde90a8649279bbced1c11fbbf12c028816a561a5093214a"
+    }
+  }
+}
