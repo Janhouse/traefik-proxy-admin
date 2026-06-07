@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  // Entry points and workspaces are auto-detected (Next.js plugin + package.json).
+  // components/ui/** is vendored shadcn/ui: treat as entry surface so its full
+  // API is not flagged unused while its imports still count as used deps.
+  "entry": ["components/ui/**"],
+  "duplicates": {
+    "minOccurrences": 3
+  },
+  "rules": {
+    "unused-dependencies": "warn"
+  }
+}

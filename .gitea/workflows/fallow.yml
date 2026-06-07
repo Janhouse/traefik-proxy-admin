@@ -1,0 +1,30 @@
+name: Fallow
+run-name: ${{ gitea.actor }} is running fallow checks 🌱
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fallow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install fallow
+        run: npm install -g fallow
+
+      - name: Fallow audit (PR diff)
+        if: ${{ gitea.event_name == 'pull_request' }}
+        run: fallow audit --base origin/${{ gitea.event.pull_request.base.ref }} --ci || true
+
+      - name: Fallow report (full)
+        if: ${{ gitea.event_name == 'push' }}
+        run: fallow --ci || true
