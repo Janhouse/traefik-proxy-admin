@@ -138,9 +138,24 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Toggle the security configuration
-    const securityConfig = await ServiceSecurityService.toggleSecurityConfig(id);
+    // Honor an explicit { isEnabled } / { priority } (set the value), and only
+    // fall back to flipping when no body is sent. This fixes both the enable
+    // switch (set, not flip) and drag-reorder (persist priority, not toggle).
+    const body = await request
+      .json()
+      .catch(() => ({}) as Record<string, unknown>);
+    if (
+      typeof body.isEnabled === "boolean" ||
+      typeof body.priority === "number"
+    ) {
+      const updated = await ServiceSecurityService.updateSecurityConfig(
+        id,
+        body as UpdateServiceSecurityConfigRequest
+      );
+      return NextResponse.json(updated);
+    }
 
+    const securityConfig = await ServiceSecurityService.toggleSecurityConfig(id);
     return NextResponse.json(securityConfig);
   } catch (error) {
     console.error("Error toggling security configuration:", error);

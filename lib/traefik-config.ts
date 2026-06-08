@@ -1,6 +1,7 @@
 import "server-only";
 import { db, services, domains } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { assembleRule, parseEntrypoints, parseMatchRules } from "@/lib/route-rule";
 import { getGlobalConfig, type GlobalTraefikConfig } from "./app-config";
 import { BasicAuthService } from "./services/basic-auth.service";
 import { ServiceSecurityService } from "./services/service-security.service";
@@ -120,9 +121,11 @@ function parseCustomHostnames(customHostnames: string | null): string[] {
 }
 
 /**
- * Generate service identifier based on hostname mode
+ * Generate service identifier based on hostname mode.
+ * Exported so the metrics scraper can map a Traefik `router-<identifier>` label
+ * back to the owning admin service.
  */
-function generateServiceIdentifier(service: Service, domain: Domain): string {
+export function generateServiceIdentifier(service: Service, domain: Domain): string {
   switch (service.hostnameMode) {
     case 'subdomain':
       return service.subdomain || 'default';
@@ -309,21 +312,33 @@ async function createTraefikService(
   // Build middlewares
   const middlewares = await buildServiceMiddlewares(service, domain, globalConfig, config);
 
-  // Create router rule for multiple hostnames
-  const hostRules = hostnames.map(hostname => `Host(\`${hostname}\`)`).join(" || ");
+  // Build the router rule. Legacy `custom` services (no structured matchers)
+  // keep the Host(a) || Host(b) form; everything else assembles the primary
+  // Host + structured matchers via the shared assembler (same as the UI preview).
+  const matchRules = parseMatchRules(service.matchRules);
+  const rule =
+    service.hostnameMode === "custom" && matchRules.length === 0
+      ? hostnames.map((hostname) => `Host(\`${hostname}\`)`).join(" || ")
+      : assembleRule(hostnames[0], matchRules);
 
-  // Determine certificate configuration
+  // Determine certificate configuration (uses the primary host + wildcard logic)
   const tlsConfig = determineTlsConfig(service, domain, hostnames);
 
-  // Determine which entrypoint to use (service-specific or default)
-  const entrypoint = service.entrypoint || globalConfig.defaultEntrypoint;
+  // Entrypoints: prefer the new array, fall back to the legacy single, then the global default.
+  const epList = parseEntrypoints(service.entrypoints);
+  const entryPoints = epList.length
+    ? epList
+    : service.entrypoint
+      ? [service.entrypoint]
+      : globalConfig.defaultEntrypoint
+        ? [globalConfig.defaultEntrypoint]
+        : [];
 
-  // Router configuration
   const router: TraefikRouter = {
-    rule: hostRules,
+    rule,
     service: serviceName,
     ...(middlewares.length > 0 && { middlewares }),
-    ...(entrypoint && { entryPoints: [entrypoint] }),
+    ...(entryPoints.length > 0 && { entryPoints }),
     tls: tlsConfig,
   };
   config.http.routers[routerName] = router;

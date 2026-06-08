@@ -1,3 +1,5 @@
+import type { MatchRule } from "@/lib/route-rule";
+
 // Hostname mode types
 export type HostnameMode = 'subdomain' | 'apex' | 'custom';
 
@@ -11,6 +13,8 @@ export interface CreateServiceRequest {
   targetIp: string;
   targetPort: number;
   entrypoint?: string;
+  entrypoints?: string[];
+  matchRules?: MatchRule[];
   isHttps?: boolean;
   insecureSkipVerify?: boolean;
   enabled?: boolean;
@@ -28,6 +32,8 @@ export interface UpdateServiceRequest {
   targetIp: string;
   targetPort: number;
   entrypoint?: string;
+  entrypoints?: string[];
+  matchRules?: MatchRule[];
   isHttps?: boolean;
   insecureSkipVerify?: boolean;
   enabled?: boolean;
@@ -46,6 +52,8 @@ export interface CreateServiceData {
   targetIp: string;
   targetPort: number;
   entrypoint?: string | null;
+  entrypoints?: string | null; // JSON string
+  matchRules?: string | null; // JSON string
   isHttps: boolean;
   insecureSkipVerify: boolean;
   enabled: boolean;
@@ -63,6 +71,8 @@ export interface UpdateServiceData {
   targetIp: string;
   targetPort: number;
   entrypoint?: string | null;
+  entrypoints?: string | null; // JSON string
+  matchRules?: string | null; // JSON string
   isHttps: boolean;
   insecureSkipVerify: boolean;
   enabled: boolean;

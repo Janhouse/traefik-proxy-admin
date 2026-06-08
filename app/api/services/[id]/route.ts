@@ -56,6 +56,8 @@ export async function PUT(
       targetIp: body.targetIp,
       targetPort: body.targetPort,
       entrypoint: body.entrypoint || null,
+      entrypoints: body.entrypoints ? JSON.stringify(body.entrypoints) : null,
+      matchRules: body.matchRules ? JSON.stringify(body.matchRules) : null,
       isHttps: body.isHttps ?? false,
       insecureSkipVerify: body.insecureSkipVerify ?? false,
       enabled: body.enabled ?? true,

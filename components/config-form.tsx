@@ -26,7 +26,7 @@ export function ConfigForm({
       {/* Domain & Certificate Settings */}
       <Card>
         <CardHeader>
-          <CardTitle>Domain & Certificate Settings</CardTitle>
+          <CardTitle>Domain &amp; Certificate Settings</CardTitle>
           <CardDescription>
             Configure the base domain and certificate resolver for all services
           </CardDescription>
@@ -34,9 +34,15 @@ export function ConfigForm({
         <CardContent className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-2">
-              <p className="text-sm text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
-                <strong>Domain & Certificate Settings</strong> are now managed individually in the <a href="/domains" className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline">Domains page</a>.
-                Each domain can have its own certificate resolver and wildcard certificate settings.
+              <p className="text-sm text-[var(--fg-2)] bg-[var(--info-soft)] border border-[color-mix(in_oklab,var(--info)_28%,transparent)] p-3 rounded-[var(--radius-md)]">
+                <strong className="text-foreground">Domain &amp; Certificate Settings</strong> are now managed individually in the{" "}
+                <a
+                  href="/domains"
+                  className="text-[var(--info)] underline hover:text-foreground transition-colors"
+                >
+                  Domains page
+                </a>
+                . Each domain can have its own certificate resolver and wildcard certificate settings.
               </p>
             </div>
             <div className="space-y-2">
@@ -129,16 +135,18 @@ export function ConfigForm({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-lg bg-muted p-4">
-            <pre className="text-sm">
-{`Example service configuration:
+          <div className="code">
+            <div className="code-head">
+              <span className="code-glyph">&lt;&gt;</span>
+              <span className="fname">preview</span>
+            </div>
+            <pre>{`Example service configuration:
 Domain: myservice.[configured-domain]
 Certificate: [per-domain cert resolver]${config.defaultEntrypoint ? `\nEntrypoint: ${config.defaultEntrypoint}` : ''}
 Middlewares: [${middlewareText.split('\n').filter(m => m.trim()).join(', ')}] + auth + service-specific
 
 Note: Domains and certificates are now configured individually in the Domains page.
-Each domain can have its own certificate resolver and wildcard settings.`}
-            </pre>
+Each domain can have its own certificate resolver and wildcard settings.`}</pre>
           </div>
         </CardContent>
       </Card>

@@ -141,7 +141,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
 
   return (
     <Dialog open={true} onOpenChange={() => onCancel()}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto bg-card">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? "Edit Domain" : "Add Domain"}
@@ -150,13 +150,13 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3">
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <div className="border border-[var(--danger)] bg-[var(--danger)]/10 rounded-md p-3">
+              <p className="text-sm text-[var(--danger)]">{error}</p>
             </div>
           )}
 
           <div className="space-y-4">
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
@@ -167,7 +167,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               />
             </div>
 
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="domain">Domain</Label>
               <Input
                 id="domain"
@@ -178,7 +178,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               />
             </div>
 
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="description">Description</Label>
               <Textarea
                 id="description"
@@ -189,7 +189,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               />
             </div>
 
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="certResolver">Certificate Resolver</Label>
               <Input
                 id="certResolver"
@@ -200,10 +200,10 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               />
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">
               <div className="space-y-0.5">
                 <Label htmlFor="useWildcardCert">Use Wildcard Certificate</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="text-[12px] text-[var(--meta)]">
                   Generate *.{formData.domain || "domain.com"} certificate
                 </p>
               </div>
@@ -214,10 +214,10 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               />
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">
               <div className="space-y-0.5">
                 <Label htmlFor="isDefault">Default Domain</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="text-[12px] text-[var(--meta)]">
                   Use as default for new services
                 </p>
               </div>
@@ -229,11 +229,11 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
             </div>
 
             {/* Certificate Configurations Section */}
-            <div className="space-y-4 border-t pt-4">
+            <div className="space-y-4 border-t border-[var(--border-soft)] pt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-medium">Certificate Configurations</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                  <p className="text-sm font-medium text-foreground">Certificate Configurations</p>
+                  <p className="text-[12px] text-[var(--meta)]">
                     Configure specific certificates (non-wildcard) for this domain
                   </p>
                 </div>
@@ -252,9 +252,12 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               {formData.certificateConfigs.length > 0 && (
                 <div className="space-y-3">
                   {formData.certificateConfigs.map((config, index) => (
-                    <div key={index} className="border border-gray-200 dark:border-gray-700 rounded-md p-3 space-y-3">
+                    <div
+                      key={index}
+                      className="border border-[var(--border-soft)] bg-[var(--surface-2)] rounded-[var(--radius-sm)] p-3 space-y-3"
+                    >
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-medium">Certificate {index + 1}</h4>
+                        <p className="text-sm font-medium text-foreground">Certificate {index + 1}</p>
                         <Button
                           type="button"
                           variant="ghost"
@@ -267,7 +270,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
+                        <div className="space-y-1.5">
                           <Label htmlFor={`cert-name-${index}`}>Certificate Name</Label>
                           <Input
                             id={`cert-name-${index}`}
@@ -278,7 +281,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                           />
                         </div>
 
-                        <div>
+                        <div className="space-y-1.5">
                           <Label htmlFor={`cert-main-${index}`}>Main Domain</Label>
                           <Input
                             id={`cert-main-${index}`}
@@ -290,7 +293,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                         </div>
                       </div>
 
-                      <div>
+                      <div className="space-y-1.5">
                         <Label htmlFor={`cert-resolver-${index}`}>Certificate Resolver</Label>
                         <Input
                           id={`cert-resolver-${index}`}
@@ -301,7 +304,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                         />
                       </div>
 
-                      <div>
+                      <div className="space-y-1.5">
                         <Label htmlFor={`cert-sans-${index}`}>
                           Subject Alternative Names (SANs)
                         </Label>
@@ -313,7 +316,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                           rows={3}
                           disabled={saving}
                         />
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        <p className="text-[12px] text-[var(--meta)] mt-1">
                           Enter one domain per line for additional domains to include in this certificate
                         </p>
                       </div>
@@ -323,9 +326,9 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
               )}
 
               {formData.certificateConfigs.length === 0 && (
-                <div className="text-center py-6 text-gray-500 dark:text-gray-400 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-md">
+                <div className="text-center py-6 text-muted-foreground border border-dashed border-[var(--border-soft)] rounded-[var(--radius-sm)]">
                   <p className="text-sm">No certificate configurations added</p>
-                  <p className="text-xs">Click &quot;Add Certificate&quot; to create specific certificates for this domain</p>
+                  <p className="text-[12px] text-[var(--meta)]">Click &quot;Add Certificate&quot; to create specific certificates for this domain</p>
                 </div>
               )}
             </div>

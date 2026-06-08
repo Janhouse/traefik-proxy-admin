@@ -1,42 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-  DragStartEvent,
-  DragOverlay,
-  UniqueIdentifier,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import {
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Plus,
-  Shield,
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-} from "lucide-react";
+import { Plus, Shield, AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SecurityConfigCard } from "@/components/security-config-card";
-import { SecurityConfigDialog } from "@/components/security-config-dialog";
-import type { SecurityConfig } from "@/lib/dto/service-security.dto";
-
-type SecurityConfigWithId = SecurityConfig & { id: string };
+import {
+  SecurityConfigCard,
+  type EditableConfig,
+  type SaveState,
+} from "@/components/security-config-card";
+import type { SecurityConfig, SecurityType } from "@/lib/dto/service-security.dto";
+import type { BasicAuthConfig } from "@/components/basic-auth-config-table";
 
 interface ServiceSecurityListProps {
   serviceId: string;
@@ -44,90 +18,138 @@ interface ServiceSecurityListProps {
   className?: string;
 }
 
-interface SortableCardProps {
-  config: SecurityConfigWithId;
-  onEdit: () => void;
-  onDelete: () => void;
-  onToggleEnabled: (enabled: boolean) => Promise<void>;
+type Item = {
+  _key: string;
+  _save: SaveState;
+  id?: string;
+  type: SecurityType;
+  isEnabled: boolean;
+  priority: number;
+  config: Record<string, unknown>;
+};
+
+function defaultConfig(type: SecurityType): Record<string, unknown> {
+  if (type === "shared_link")
+    return { expiresInHours: 24, sessionDurationMinutes: 60 };
+  if (type === "sso") return { groups: [], users: [] };
+  return { basicAuthConfigId: "" };
 }
 
-function SortableCard({ config, onEdit, onDelete, onToggleEnabled }: SortableCardProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: config.id });
-
-  const style = {
-    // Only apply transform when actively dragging, and make it more subtle
-    transform: isDragging ? CSS.Transform.toString(transform) : undefined,
-    transition,
-    // Ensure proper z-index when dragging
-    zIndex: isDragging ? 1000 : undefined,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      <SecurityConfigCard
-        config={config}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onToggleEnabled={onToggleEnabled}
-        isDragging={isDragging}
-        dragHandle={{ ...attributes, ...listeners }}
-      />
-    </div>
-  );
+function isValid(it: Item): boolean {
+  if (it.type === "basic_auth") return !!it.config.basicAuthConfigId;
+  return true;
 }
 
-export function ServiceSecurityList({ serviceId, serviceName, className }: ServiceSecurityListProps) {
-  const [configs, setConfigs] = useState<SecurityConfigWithId[]>([]);
+export function ServiceSecurityList({
+  serviceId,
+  className,
+}: ServiceSecurityListProps) {
+  const [items, setItems] = useState<Item[]>([]);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  const [basicAuthConfigs, setBasicAuthConfigs] = useState<BasicAuthConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
-  // UI state
-  const [showDialog, setShowDialog] = useState(false);
-  const [editingConfig, setEditingConfig] = useState<SecurityConfigWithId | null>(null);
-  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
+  const itemsRef = useRef<Item[]>([]);
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const tmpSeq = useRef(0);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
-  // Drag and drop sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+  const setSave = useCallback((key: string, s: SaveState) => {
+    setItems((prev) =>
+      prev.map((it) => (it._key === key ? { ...it, _save: s } : it))
+    );
+  }, []);
+
+  const updateItem = useCallback((key: string, patch: Partial<Item>) => {
+    setItems((prev) =>
+      prev.map((it) => (it._key === key ? { ...it, ...patch } : it))
+    );
+  }, []);
+
+  const persist = useCallback(
+    async (key: string) => {
+      const it = itemsRef.current.find((x) => x._key === key);
+      if (!it) return;
+      if (!isValid(it)) {
+        setSave(key, "draft");
+        return;
+      }
+      setSave(key, "saving");
+      try {
+        if (it.id) {
+          const res = await fetch(`/api/services/security-configs/${it.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              isEnabled: it.isEnabled,
+              priority: it.priority,
+              config: it.config,
+            }),
+          });
+          if (!res.ok) throw new Error(`${res.status}`);
+        } else {
+          const res = await fetch(`/api/services/${serviceId}/security-configs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serviceId,
+              securityType: it.type,
+              isEnabled: it.isEnabled,
+              priority: it.priority,
+              config: it.config,
+            }),
+          });
+          if (!res.ok) throw new Error(`${res.status}`);
+          const created = await res.json();
+          updateItem(key, { id: created.id });
+        }
+        setSave(key, "saved");
+        setError(null);
+      } catch {
+        setSave(key, "draft");
+        setError("Failed to save a configuration — check the values and retry.");
+      }
+    },
+    [serviceId, setSave, updateItem]
   );
 
-  // Fetch security configurations
+  const scheduleSave = useCallback(
+    (key: string, delay: number) => {
+      setSave(key, "saving");
+      if (timers.current[key]) clearTimeout(timers.current[key]);
+      timers.current[key] = setTimeout(() => void persist(key), delay);
+    },
+    [persist, setSave]
+  );
+
   const fetchConfigs = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const response = await fetch(`/api/services/${serviceId}/security-configs`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch configurations: ${response.status}`);
-      }
-      const data = await response.json();
-
-      // Sort by priority (highest first)
-      const sortedConfigs = data.sort((a: SecurityConfigWithId, b: SecurityConfigWithId) =>
-        b.priority - a.priority
+      const [cfgRes, baRes] = await Promise.all([
+        fetch(`/api/services/${serviceId}/security-configs`),
+        fetch(`/api/security/basic-auth-configs`),
+      ]);
+      if (!cfgRes.ok) throw new Error(`Failed to load: ${cfgRes.status}`);
+      const data: (SecurityConfig & { id: string })[] = await cfgRes.json();
+      const sorted = [...data].sort((a, b) => b.priority - a.priority);
+      setItems(
+        sorted.map((c) => ({
+          _key: c.id,
+          _save: "saved" as SaveState,
+          id: c.id,
+          type: c.type,
+          isEnabled: c.isEnabled,
+          priority: c.priority,
+          config: c.config as unknown as Record<string, unknown>,
+        }))
       );
-
-      setConfigs(sortedConfigs);
+      if (baRes.ok) setBasicAuthConfigs(await baRes.json());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch configurations");
+      setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
@@ -137,302 +159,174 @@ export function ServiceSecurityList({ serviceId, serviceName, className }: Servi
     fetchConfigs();
   }, [fetchConfigs]);
 
-  // Auto-hide success messages
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
+  const addConfig = useCallback(() => {
+    const used = new Set(itemsRef.current.map((i) => i.type));
+    let type: SecurityType = "shared_link";
+    if (used.has("shared_link")) type = used.has("sso") ? "basic_auth" : "sso";
+    const priority = itemsRef.current.length
+      ? Math.max(...itemsRef.current.map((i) => i.priority)) + 1
+      : 10;
+    const key = `new-${tmpSeq.current++}`;
+    const item: Item = {
+      _key: key,
+      _save: "draft",
+      type,
+      isEnabled: true,
+      priority,
+      config: defaultConfig(type),
+    };
+    setItems((prev) => [item, ...prev]);
+    setOpenKeys((prev) => new Set(prev).add(key));
+    if (type !== "basic_auth") scheduleSave(key, 800);
+  }, [scheduleSave]);
 
+  const toggleOpen = useCallback((key: string) => {
+    setOpenKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(event.active.id);
-  };
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (!over || active.id === over.id) {
-      setActiveId(null);
-      return;
-    }
-
-    const oldIndex = configs.findIndex((config) => config.id === active.id);
-    const newIndex = configs.findIndex((config) => config.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      const reorderedConfigs = arrayMove(configs, oldIndex, newIndex);
-
-      // Update priorities based on new positions
-      const updatedConfigs = reorderedConfigs.map((config, index) => ({
-        ...config,
-        priority: reorderedConfigs.length - index, // Higher index = higher priority
-      }));
-
-      setConfigs(updatedConfigs);
-
-      // Save new priorities to backend
-      try {
-        setSaving(true);
-        await Promise.all(
-          updatedConfigs.map((config) =>
-            fetch(`/api/services/security-configs/${config.id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ priority: config.priority }),
-            })
-          )
-        );
-        setSuccess("Configuration order updated successfully");
-      } catch {
-        setError("Failed to save new order");
-        // Revert on error
-        fetchConfigs();
-      } finally {
-        setSaving(false);
+  const changeType = useCallback(
+    (key: string, type: SecurityType) => {
+      // Traefik's securityType is immutable, so switching type recreates the
+      // rule: drop the previously persisted config and re-create with the new
+      // type (same priority) once it is valid.
+      const it = itemsRef.current.find((x) => x._key === key);
+      const oldId = it?.id;
+      updateItem(key, { type, config: defaultConfig(type), id: undefined });
+      if (oldId) {
+        fetch(`/api/services/security-configs/${oldId}`, {
+          method: "DELETE",
+        }).catch(() => {});
       }
-    }
+      scheduleSave(key, type === "basic_auth" ? 0 : 400);
+    },
+    [scheduleSave, updateItem]
+  );
 
-    setActiveId(null);
-  };
+  const changeConfig = useCallback(
+    (key: string, config: Record<string, unknown>) => {
+      updateItem(key, { config });
+      scheduleSave(key, 600);
+    },
+    [scheduleSave, updateItem]
+  );
 
-  const handleSaveConfig = async (configData: SecurityConfig & { id?: string }) => {
-    try {
-      setSaving(true);
-      setError(null);
+  const toggleEnabled = useCallback(
+    (key: string, enabled: boolean) => {
+      updateItem(key, { isEnabled: enabled });
+      scheduleSave(key, 0);
+    },
+    [scheduleSave, updateItem]
+  );
 
-      if (configData.id) {
-        // Update existing config
-        const response = await fetch(`/api/services/security-configs/${configData.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            isEnabled: configData.isEnabled,
-            priority: configData.priority,
-            config: configData.config,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to update configuration: ${response.status}`);
-        }
-      } else {
-        // Create new config
-        const response = await fetch(`/api/services/${serviceId}/security-configs`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serviceId,
-            securityType: configData.type,
-            isEnabled: configData.isEnabled,
-            priority: configData.priority,
-            config: configData.config,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to create configuration: ${response.status}`);
+  const deleteConfig = useCallback(
+    async (key: string) => {
+      if (timers.current[key]) clearTimeout(timers.current[key]);
+      const it = itemsRef.current.find((x) => x._key === key);
+      setItems((prev) => prev.filter((x) => x._key !== key));
+      if (it?.id) {
+        try {
+          await fetch(`/api/services/security-configs/${it.id}`, {
+            method: "DELETE",
+          });
+        } catch {
+          setError("Failed to delete a configuration.");
+          fetchConfigs();
         }
       }
-
-      await fetchConfigs();
-      setSuccess(configData.id ? "Configuration updated successfully" : "Configuration added successfully");
-      setEditingConfig(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save configuration");
-      throw err; // Re-throw to prevent dialog from closing
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeleteConfig = async (configId: string) => {
-    try {
-      setSaving(true);
-      setError(null);
-
-      const response = await fetch(`/api/services/security-configs/${configId}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete configuration: ${response.status}`);
-      }
-
-      await fetchConfigs();
-      setSuccess("Configuration deleted successfully");
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Failed to delete configuration");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleToggleEnabled = async (configId: string, enabled: boolean) => {
-    try {
-      setError(null);
-
-      const response = await fetch(`/api/services/security-configs/${configId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isEnabled: enabled }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to toggle configuration: ${response.status}`);
-      }
-
-      // Update local state immediately for better UX
-      setConfigs(prev =>
-        prev.map(config =>
-          config.id === configId ? { ...config, isEnabled: enabled } : config
-        )
-      );
-
-      setSuccess(`Configuration ${enabled ? "enabled" : "disabled"} successfully`);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Failed to toggle configuration");
-    }
-  };
-
-
-
-  const activeConfig = activeId ? configs.find(config => config.id === activeId) : null;
-
-  // Helper functions to check existing configurations
-  const hasSharedLink = configs.some(config => config.type === 'shared_link');
-  const hasSso = configs.some(config => config.type === 'sso');
-  const basicAuthCount = configs.filter(config => config.type === 'basic_auth').length;
+    },
+    [fetchConfigs]
+  );
 
   return (
-    <div className={cn("space-y-4", className)}>
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className={cn("space-y-3.5", className)}>
+      <div className="sec-head">
+        <span className="ic">
+          <Shield className="h-[17px] w-[17px]" />
+        </span>
         <div>
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <Shield className="h-5 w-5" />
+          <h2 className="flex items-center gap-2">
             Security Configurations
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Manage authentication and authorization rules for {serviceName}
-          </p>
+            <span className="count">{items.length}</span>
+          </h2>
+          <div className="sub">
+            Each rule is a Traefik middleware on this router. Disabled rules are
+            skipped.
+          </div>
         </div>
-
-        <Button
-          onClick={() => setShowDialog(true)}
-          size="sm"
-          className="flex items-center gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          Add Configuration
-        </Button>
+        <div className="right">
+          <Button
+            className="btn-brand"
+            size="sm"
+            onClick={addConfig}
+            disabled={loading}
+          >
+            <Plus className="h-4 w-4" />
+            Add configuration
+          </Button>
+        </div>
       </div>
 
-      {/* Status Messages */}
       {error && (
-        <div className="p-3 rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20">
-          <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
-            <AlertCircle className="h-4 w-4" />
-            <span className="text-sm font-medium">{error}</span>
-          </div>
+        <div className="callout danger">
+          <AlertCircle className="ico h-4 w-4" />
+          <p>{error}</p>
         </div>
       )}
 
-      {success && (
-        <div className="p-3 rounded-lg border border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20">
-          <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span className="text-sm font-medium">{success}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Configurations List */}
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-3 text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin" />
-            <span>Loading configurations...</span>
-          </div>
+        <div className="flex items-center justify-center gap-3 py-12 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span>Loading configurations…</span>
         </div>
-      ) : configs.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-            <Shield className="h-6 w-6 text-muted-foreground" />
+      ) : items.length === 0 ? (
+        <div className="sec-empty">
+          <div className="ei">
+            <Shield />
           </div>
-          <h3 className="text-lg font-medium mb-2">No security configurations</h3>
-          <p className="text-muted-foreground mb-4">
-            Add your first security configuration to control access to this service.
+          <h3>No security rules</h3>
+          <p>
+            This service is reachable by anyone who can resolve its hostname. Add
+            a configuration to require authentication.
           </p>
-          <Button onClick={() => setShowDialog(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Configuration
+          <Button className="btn-brand" onClick={addConfig}>
+            <Plus className="h-4 w-4" />
+            Add configuration
           </Button>
         </div>
       ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext
-            items={configs.map(config => config.id)}
-            strategy={verticalListSortingStrategy}
-          >
-            <div className="space-y-4">
-              {configs.map((config) => (
-                <SortableCard
-                  key={config.id}
-                  config={config}
-                  onEdit={() => {
-                    setEditingConfig(config);
-                    setShowDialog(true);
-                  }}
-                  onDelete={() => handleDeleteConfig(config.id)}
-                  onToggleEnabled={(enabled) => handleToggleEnabled(config.id, enabled)}
-                />
-              ))}
-            </div>
-          </SortableContext>
-
-          <DragOverlay>
-            {activeConfig && (
-              <div className="rotate-2 opacity-95 shadow-2xl">
-                <SecurityConfigCard
-                  config={activeConfig}
-                  onEdit={() => {}}
-                  onDelete={() => {}}
-                  onToggleEnabled={async () => {}}
-                  isDragging
-                />
-              </div>
-            )}
-          </DragOverlay>
-        </DndContext>
+        <div className="sec-list">
+          {items.map((it) => {
+            const usedSingletons = items
+              .filter(
+                (x) =>
+                  x._key !== it._key &&
+                  (x.type === "sso" || x.type === "shared_link")
+              )
+              .map((x) => x.type);
+            return (
+              <SecurityConfigCard
+                key={it._key}
+                config={it as unknown as EditableConfig}
+                open={openKeys.has(it._key)}
+                saveState={it._save}
+                canSwitchType
+                disabledTypes={usedSingletons}
+                basicAuthConfigs={basicAuthConfigs}
+                onToggleOpen={() => toggleOpen(it._key)}
+                onChangeType={(t) => changeType(it._key, t)}
+                onChangeConfig={(config) => changeConfig(it._key, config)}
+                onToggleEnabled={(enabled) => toggleEnabled(it._key, enabled)}
+                onDelete={() => deleteConfig(it._key)}
+              />
+            );
+          })}
+        </div>
       )}
-
-      {/* Add/Edit Configuration Dialog */}
-      <SecurityConfigDialog
-        open={showDialog}
-        onOpenChange={(open) => {
-          setShowDialog(open);
-          if (!open) {
-            setEditingConfig(null);
-          }
-        }}
-        serviceId={serviceId}
-        editingConfig={editingConfig}
-        onSave={handleSaveConfig}
-        onCancel={() => {
-          setShowDialog(false);
-          setEditingConfig(null);
-        }}
-        hasSharedLink={hasSharedLink}
-        hasSso={hasSso}
-        basicAuthCount={basicAuthCount}
-      />
     </div>
   );
 }

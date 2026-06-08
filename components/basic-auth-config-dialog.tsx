@@ -105,7 +105,7 @@ export function BasicAuthConfigDialog({
                 disabled={submitting}
               />
               {formErrors.name && (
-                <p className="text-sm text-red-600">{formErrors.name}</p>
+                <p className="text-sm text-[var(--danger)]">{formErrors.name}</p>
               )}
             </div>
 
@@ -119,7 +119,7 @@ export function BasicAuthConfigDialog({
                 disabled={submitting}
               />
               {formErrors.description && (
-                <p className="text-sm text-red-600">{formErrors.description}</p>
+                <p className="text-sm text-[var(--danger)]">{formErrors.description}</p>
               )}
             </div>
           </div>

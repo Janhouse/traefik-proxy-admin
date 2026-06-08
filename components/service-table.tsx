@@ -1,12 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
-  Settings,
   Plus,
   Power,
   PowerOff,
@@ -16,23 +13,39 @@ import {
   ExternalLink,
   Clock,
   Copy,
-  Link,
+  Link as LinkIcon,
   Users,
   Key,
+  Search,
+  Settings,
 } from "lucide-react";
 import { ServiceCountdown } from "@/components/service-countdown";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HealthChip } from "@/components/traefik/health-chip";
+import { StatusBadge, MetaBadge } from "@/components/traefik/status-badge";
+import { MiniBars, healthToTone } from "@/components/traefik/mini-bars";
+import { toast } from "@/components/toaster";
+import {
+  parseMiddlewareNames,
+  primaryHostname,
+  publicUrl,
+  targetAddress,
+  serviceEntrypoints,
+} from "@/lib/service-display";
+import type { BackendHealthResponse, MetricsResponse } from "@/lib/traefik-client-types";
 
 export interface Service {
   id: string;
   name: string;
-  subdomain?: string | null; // Optional, only used when hostname_mode is 'subdomain'
-  hostnameMode: 'subdomain' | 'apex' | 'custom';
-  customHostnames?: string | null; // JSON array of hostnames when hostname_mode is 'custom'
+  subdomain?: string | null;
+  hostnameMode: "subdomain" | "apex" | "custom";
+  customHostnames?: string | null;
   domainId: string;
   targetIp: string;
   targetPort: number;
   entrypoint?: string | null;
+  entrypoints?: string | null; // JSON string[]
+  matchRules?: string | null; // JSON MatchRule[]
   isHttps: boolean;
   insecureSkipVerify: boolean;
   enabled: boolean;
@@ -42,7 +55,6 @@ export interface Service {
   requestHeaders?: string;
   createdAt: string;
   updatedAt: string;
-  // Domain information
   domain?: {
     id: string;
     name: string;
@@ -51,7 +63,6 @@ export interface Service {
     certResolver: string;
     isDefault: boolean;
   };
-  // Security configuration indicators
   hasSharedLink?: boolean;
   hasSso?: boolean;
   hasBasicAuth?: boolean;
@@ -61,192 +72,246 @@ export interface Service {
 interface ServiceTableProps {
   services: Service[];
   loading: boolean;
-  onAddNew?: () => void;
-  onEdit?: (service: Service) => void;
+  health?: BackendHealthResponse | null;
+  metrics?: MetricsResponse | null;
   onDelete: (id: string) => Promise<void>;
   onToggle: (id: string) => Promise<void>;
   onManageSecurity?: (service: Service) => void;
   onGenerateShareLink?: (serviceId: string) => Promise<void>;
   onRefresh: () => void;
-  useRouterNavigation?: boolean;
 }
+
+function formatDuration(minutes: number | null | undefined): string {
+  if (!minutes) return "∞";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? `${h}h${m}m` : `${h}h`;
+  }
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  return h ? `${d}d${h}h` : `${d}d`;
+}
+
+type Filter = "all" | "enabled" | "disabled";
 
 export function ServiceTable({
   services,
   loading,
-  onAddNew,
-  onEdit,
+  health,
+  metrics,
   onDelete,
   onToggle,
   onManageSecurity,
   onGenerateShareLink,
   onRefresh,
-  useRouterNavigation = false,
 }: ServiceTableProps) {
-  const [deletingService, setDeletingService] = useState<string | null>(null);
-  const [togglingService, setTogglingService] = useState<string | null>(null);
   const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const formatDurationForButton = (durationMinutes: number | null | undefined): string => {
-    if (!durationMinutes) return "∞";
+  const sorted = useMemo(
+    () =>
+      [...services].sort((a, b) => {
+        if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      }),
+    [services]
+  );
 
-    if (durationMinutes < 60) {
-      return `${durationMinutes}min`;
-    } else if (durationMinutes < 1440) {
-      const hours = Math.floor(durationMinutes / 60);
-      const mins = durationMinutes % 60;
-      return mins > 0 ? `${hours}h${mins}min` : `${hours}h`;
-    } else {
-      const days = Math.floor(durationMinutes / 1440);
-      const hours = Math.floor((durationMinutes % 1440) / 60);
-      const mins = durationMinutes % 60;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sorted.filter((s) => {
+      const status = s.enabled ? "enabled" : "disabled";
+      if (filter !== "all" && status !== filter) return false;
+      if (!q) return true;
+      const haystack = [
+        s.name,
+        primaryHostname(s),
+        targetAddress(s),
+        ...parseMiddlewareNames(s.middlewares),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [sorted, query, filter]);
 
-      let result = `${days}d`;
-      if (hours > 0) result += `${hours}h`;
-      if (mins > 0) result += `${mins}min`;
-
-      return result;
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    setDeletingService(id);
-    try {
-      await onDelete(id);
-    } finally {
-      setDeletingService(null);
-    }
-  };
+  const enabledCount = services.filter((s) => s.enabled).length;
+  const unreachableCount = health
+    ? services.filter((s) => health.services[s.id]?.state === "down").length
+    : 0;
 
   const handleToggle = async (id: string) => {
-    setTogglingService(id);
+    setBusy(id);
     try {
       await onToggle(id);
     } finally {
-      setTogglingService(null);
+      setBusy(null);
+    }
+  };
+  const handleDelete = async (id: string) => {
+    setBusy(id);
+    try {
+      await onDelete(id);
+    } finally {
+      setBusy(null);
     }
   };
 
   if (loading) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Services
-          </CardTitle>
-          <CardDescription>Loading services...</CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="rounded-[var(--radius-lg)] border bg-card p-10 text-center text-muted-foreground">
+        Loading services…
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              Services
-            </CardTitle>
-            <CardDescription>
-              Manage your Traefik proxy services
-            </CardDescription>
-          </div>
-          <Button onClick={useRouterNavigation ? () => router.push('/services/add') : onAddNew}>
-            <Plus className="mr-2 h-4 w-4" />
+    <div>
+      {/* Toolbar */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meta)]" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name, domain, target IP…"
+            autoComplete="off"
+            className="w-full rounded-[var(--radius-sm)] border bg-[var(--surface-2)] py-2 pl-9 pr-3 text-[13.5px] outline-none focus:border-[var(--brand)] focus:shadow-[var(--ring-glow)]"
+          />
+        </div>
+        <div className="inline-flex gap-0.5 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] p-[3px]">
+          {(["all", "enabled", "disabled"] as Filter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-[5px] px-3 py-1.5 text-[12.5px] font-semibold capitalize transition-colors ${
+                filter === f
+                  ? "bg-[color-mix(in_oklab,var(--foreground)_10%,transparent)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Two-signal legend */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <StatusBadge enabled />
+          config is live in Traefik
+        </span>
+        <span className="flex items-center gap-2">
+          <HealthChip state="up" label="Reachable" />
+          <span className="text-[var(--meta)]">·</span>
+          <HealthChip state="down" label="Unreachable" />
+          backend health
+        </span>
+        {unreachableCount > 0 && (
+          <span className="font-mono text-[var(--danger)]">
+            {unreachableCount} backend{unreachableCount > 1 ? "s" : ""} unreachable
+          </span>
+        )}
+        <span className="ml-auto font-mono text-[var(--meta)]">
+          {filtered.length} of {services.length} · {enabledCount} enabled
+        </span>
+      </div>
+
+      {services.length === 0 ? (
+        <div className="rounded-[var(--radius-lg)] border bg-card p-12 text-center">
+          <Settings className="mx-auto mb-4 h-12 w-12 text-[var(--meta)]" />
+          <h3 className="mb-2 text-lg font-medium">No services yet</h3>
+          <p className="mb-4 text-muted-foreground">
+            Get started by creating your first proxy route.
+          </p>
+          <Button
+            className="btn-brand"
+            onClick={() => router.push("/services/add")}
+          >
+            <Plus className="mr-1 h-4 w-4" />
             Add Service
           </Button>
         </div>
-      </CardHeader>
-      <CardContent>
-        {services.length === 0 ? (
-          <div className="text-center py-8">
-            <Settings className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-              No services found
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">
-              Get started by creating your first service.
-            </p>
-            <Button onClick={useRouterNavigation ? () => router.push('/services/add') : onAddNew}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Service
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {services
-              .sort((a, b) => {
-                // Sort enabled services first
-                if (a.enabled && !b.enabled) return -1;
-                if (!a.enabled && b.enabled) return 1;
-                return a.name.localeCompare(b.name);
-              })
-              .map((service) => (
-              <div
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {filtered.map((service) => {
+            const host = primaryHostname(service);
+            const url = publicUrl(service);
+            const middlewares = parseMiddlewareNames(service.middlewares);
+            const h = health?.services[service.id];
+            const healthState = h?.state ?? (service.enabled ? "unknown" : "na");
+            const m = metrics?.services[service.id];
+            const tone = healthToTone(healthState);
+
+            return (
+              <article
                 key={service.id}
-                className={`border rounded-lg p-4 transition-opacity ${
-                  service.enabled ? "" : "opacity-50 bg-gray-50 dark:bg-gray-800/50"
-                }`}
+                className={`svc ${service.enabled ? "is-enabled" : "is-disabled"}`}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-medium">{service.name}</h3>
-                      <Badge variant={service.enabled ? "default" : "secondary"}>
-                        {service.enabled ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {service.isHttps && (
-                        <Badge variant="outline" className="text-green-600">
-                          HTTPS
-                        </Badge>
-                      )}
-                      {/* Security indicators */}
-                      {service.hasSharedLink && (
-                        <Badge
-                          variant="outline"
-                          className="text-blue-600 px-1 py-0"
-                          title="Shared Link Authentication"
-                        >
-                          <Link className="h-3 w-3" />
-                        </Badge>
-                      )}
-                      {service.hasSso && (
-                        <Badge
-                          variant="outline"
-                          className="text-purple-600 px-1 py-0"
-                          title="Single Sign-On (SSO) Authentication"
-                        >
-                          <Users className="h-3 w-3" />
-                        </Badge>
-                      )}
-                      {service.hasBasicAuth && (
-                        <Badge
-                          variant="outline"
-                          className="text-orange-600 px-1 py-0"
-                          title={`Basic Authentication${service.basicAuthCount && service.basicAuthCount > 1 ? ` (${service.basicAuthCount} configs)` : ''}`}
-                        >
-                          <Key className="h-3 w-3" />
-                          {service.basicAuthCount && service.basicAuthCount > 1 && (
-                            <span className="ml-1 text-xs">{service.basicAuthCount}</span>
-                          )}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
+                {/* top row */}
+                <div className="mb-3 flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={() => router.push(`/services/${service.id}`)}
+                    className="text-[15px] font-semibold tracking-tight hover:text-[var(--brand)]"
+                  >
+                    {service.name}
+                  </button>
+                  <StatusBadge enabled={service.enabled} />
+                  {service.enabled && healthState === "down" && (
+                    <MetaBadge variant="danger" withDot title="Backend health check failing">
+                      Backend down
+                    </MetaBadge>
+                  )}
+                  {serviceEntrypoints(service).map((ep) => (
+                    <MetaBadge
+                      key={ep}
+                      variant="https"
+                      title="Served on this entrypoint"
+                    >
+                      {ep}
+                    </MetaBadge>
+                  ))}
+                  {service.isHttps && (
+                    <MetaBadge variant="info">HTTPS</MetaBadge>
+                  )}
+                  {service.hasSharedLink && (
+                    <MetaBadge variant="info" title="Shared link auth">
+                      <LinkIcon className="h-3 w-3" />
+                    </MetaBadge>
+                  )}
+                  {service.hasSso && (
+                    <MetaBadge variant="info" title="SSO auth">
+                      <Users className="h-3 w-3" />
+                    </MetaBadge>
+                  )}
+                  {service.hasBasicAuth && (
+                    <MetaBadge variant="info" title="Basic auth">
+                      <Key className="h-3 w-3" />
+                      {service.basicAuthCount && service.basicAuthCount > 1
+                        ? service.basicAuthCount
+                        : null}
+                    </MetaBadge>
+                  )}
+
+                  {/* actions */}
+                  <div className="ml-auto flex flex-wrap gap-1.5">
                     {service.hasSharedLink && onGenerateShareLink && (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => onGenerateShareLink(service.id)}
-                        className="text-blue-600 hover:text-blue-700"
+                        disabled={busy === service.id}
+                        onClick={async () => {
+                          await onGenerateShareLink(service.id);
+                          toast("Share link copied to clipboard");
+                        }}
                       >
-                        <Copy className="h-4 w-4 mr-1" />
+                        <Copy className="h-3.5 w-3.5" />
                         Copy Link
                       </Button>
                     )}
@@ -255,32 +320,34 @@ export function ServiceTable({
                       size="sm"
                       onClick={() => onManageSecurity?.(service)}
                     >
-                      <Shield className="h-4 w-4 mr-1" />
+                      <Shield className="h-3.5 w-3.5" />
                       Security
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={useRouterNavigation ? () => router.push(`/services/${service.id}/edit`) : () => onEdit?.(service)}
+                      onClick={() =>
+                        router.push(`/services/${service.id}/edit`)
+                      }
                     >
-                      <Edit className="h-4 w-4 mr-1" />
+                      <Edit className="h-3.5 w-3.5" />
                       Edit
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleToggle(service.id)}
-                      disabled={togglingService === service.id}
+                      disabled={busy === service.id}
                       className={
                         service.enabled
-                          ? "text-red-600 hover:text-red-700"
-                          : "text-green-600 hover:text-green-700"
+                          ? "text-[var(--danger)] hover:text-[var(--danger)]"
+                          : "text-[var(--success)] hover:text-[var(--success)]"
                       }
+                      onClick={() => handleToggle(service.id)}
                     >
                       {service.enabled ? (
-                        <PowerOff className="h-4 w-4 mr-1" />
+                        <PowerOff className="h-3.5 w-3.5" />
                       ) : (
-                        <Power className="h-4 w-4 mr-1" />
+                        <Power className="h-3.5 w-3.5" />
                       )}
                       {service.enabled ? "Disable" : "Enable"}
                     </Button>
@@ -289,15 +356,15 @@ export function ServiceTable({
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={deletingService === service.id}
-                          className="text-red-600 hover:text-red-700"
+                          disabled={busy === service.id}
+                          className="text-[var(--danger)] hover:text-[var(--danger)]"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" />
+                          <Trash2 className="h-3.5 w-3.5" />
                           Delete
                         </Button>
                       }
                       title="Delete Service"
-                      description={`Are you sure you want to delete "${service.name}"? This action cannot be undone.`}
+                      description={`Delete "${service.name}"? This cannot be undone.`}
                       confirmText="Delete"
                       onConfirm={() => handleDelete(service.id)}
                       variant="destructive"
@@ -305,69 +372,122 @@ export function ServiceTable({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <label className="text-gray-500 dark:text-gray-400">URL</label>
-                    <div className="flex items-center gap-1">
-                      <span className="font-mono">
-                        {service.subdomain}.{service.domain?.domain}
+                {/* detail grid */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                  <Field label="URL">
+                    {host ? (
+                      <span className="flex items-center gap-1.5">
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--brand-2)] hover:underline"
+                        >
+                          {host}
+                        </a>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard?.writeText(url);
+                            toast("URL copied to clipboard");
+                          }}
+                          className="text-[var(--meta)] hover:text-foreground"
+                          aria-label="Copy URL"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </button>
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-auto p-1"
-                        onClick={() => window.open(`https://${service.subdomain}.${service.domain?.domain}`, '_blank')}
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                      </Button>
+                    ) : (
+                      <span className="text-[var(--meta)]">—</span>
+                    )}
+                  </Field>
+                  <Field label="Target">{targetAddress(service)}</Field>
+                  <Field label={middlewares.length ? "Middlewares" : "Auto Duration"}>
+                    {middlewares.length ? (
+                      <span className="text-[12px]">{middlewares.join(", ")}</span>
+                    ) : (
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-[var(--meta)]" />
+                        {formatDuration(service.enableDurationMinutes)}
+                      </span>
+                    )}
+                  </Field>
+                  <Field label="Backend">
+                    <HealthChip
+                      state={healthState}
+                      label={
+                        healthState === "up"
+                          ? "Reachable"
+                          : healthState === "down"
+                            ? "Unreachable"
+                            : healthState === "na"
+                              ? "—"
+                              : "Checking"
+                      }
+                    />
+                  </Field>
+                  <Field label="Traffic · 1h">
+                    <div
+                      className={`traffic ${tone === "down" ? "is-down" : ""} ${
+                        !m || tone === "na" ? "is-na" : ""
+                      }`}
+                    >
+                      <MiniBars bars={m?.bars ?? []} tone={tone} />
+                      <span className="rate">
+                        {!m || tone === "na" ? (
+                          "—"
+                        ) : (
+                          <>
+                            {Math.round(m.reqPerSec)}
+                            <span className="u">/s</span>
+                          </>
+                        )}
+                      </span>
                     </div>
-                  </div>
+                  </Field>
+                </div>
 
-                  <div>
-                    <label className="text-gray-500 dark:text-gray-400">Target</label>
-                    <p className="font-mono">
-                      {service.targetIp}:{service.targetPort}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="text-gray-500 dark:text-gray-400">Auto Duration</label>
-                    <div className="flex items-center gap-1">
-                      <Clock className="h-3 w-3 text-gray-400" />
-                      <span>{formatDurationForButton(service.enableDurationMinutes)}</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-gray-500 dark:text-gray-400">Status</label>
-                    {service.enabled && service.enabledAt && service.enableDurationMinutes ? (
+                {service.enabled &&
+                  service.enabledAt &&
+                  service.enableDurationMinutes != null && (
+                    <div className="mt-2 border-t pt-2 text-[12px]">
                       <ServiceCountdown
                         enabledAt={service.enabledAt}
                         durationMinutes={service.enableDurationMinutes}
                         enabled={service.enabled}
                         onExpired={onRefresh}
                       />
-                    ) : service.enabled ? (
-                      <p className="text-green-600">Running</p>
-                    ) : (
-                      <p className="text-gray-500">Stopped</p>
-                    )}
-                  </div>
-                </div>
+                    </div>
+                  )}
+              </article>
+            );
+          })}
 
-                {service.middlewares && (
-                  <div className="mt-3 pt-3 border-t">
-                    <label className="text-gray-500 dark:text-gray-400 text-xs">Middlewares</label>
-                    <p className="text-xs font-mono text-gray-600 dark:text-gray-300">
-                      {service.middlewares}
-                    </p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          {filtered.length === 0 && (
+            <div className="py-12 text-center text-muted-foreground">
+              No services match your search.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--meta)]">
+        {label}
+      </div>
+      <div className="flex items-center gap-1.5 font-mono text-[13px] text-[var(--fg-2)]">
+        {children}
+      </div>
+    </div>
   );
 }

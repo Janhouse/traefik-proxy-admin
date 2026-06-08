@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, RefreshCw } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
+import { PageBand, PageMain } from "@/components/page-band";
 import { DomainsTable } from "@/components/domains-table";
 import { DomainForm } from "@/components/domain-form";
 import { useDomains } from "@/lib/hooks/use-domains";
@@ -53,42 +54,36 @@ export default function DomainsPage() {
   if (loading && domains.length === 0) {
     return (
       <AppLayout>
-        <div className="flex items-center justify-center py-12">
-          <RefreshCw className="h-8 w-8 animate-spin" />
-        </div>
+        <PageBand eyebrow="Manage" title="Domains" subtitle="Base domains, wildcard certs & resolvers" />
+        <PageMain>
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        </PageMain>
       </AppLayout>
     );
   }
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        {/* Page Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
-              Domain Management
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">
-              Manage domains for your services with certificate settings
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={handleAddDomain}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Domain
-            </Button>
-          </div>
-        </div>
-
-        {/* Domains Table */}
+      <PageBand
+        eyebrow="Manage"
+        title="Domains"
+        subtitle="Base domains, wildcard certs & resolvers"
+        actions={
+          <Button className="btn-brand" onClick={handleAddDomain}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Domain
+          </Button>
+        }
+      />
+      <PageMain>
         <DomainsTable
           domains={domains}
           onEdit={handleEditDomain}
           onDelete={handleDeleteDomain}
         />
 
-        {/* Domain Form Dialog */}
         {showForm && (
           <DomainForm
             domain={editingDomain}
@@ -96,7 +91,7 @@ export default function DomainsPage() {
             onCancel={handleFormCancel}
           />
         )}
-      </div>
+      </PageMain>
     </AppLayout>
   );
 }

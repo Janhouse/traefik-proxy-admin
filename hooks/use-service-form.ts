@@ -1,8 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Service } from "@/components/service-table";
+import type { MatchRule } from "@/lib/route-rule";
+import { parseMatchRules } from "@/lib/route-rule";
+import { serviceEntrypoints } from "@/lib/service-display";
 
-export type ServiceFormData = Omit<Service, "id" | "createdAt" | "updatedAt"> & {
+export type ServiceFormData = Omit<
+  Service,
+  "id" | "createdAt" | "updatedAt" | "middlewares" | "entrypoints" | "matchRules"
+> & {
   domainId?: string;
+  /** comma string when loaded from the DB, normalized to string[] on submit */
+  middlewares?: string | string[] | null;
+  /** managed by the route editor, submitted as arrays */
+  entrypoints?: string[];
+  matchRules?: MatchRule[];
 };
 
 interface UseServiceFormOptions {
@@ -20,6 +31,8 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
     targetIp: "",
     targetPort: 80,
     entrypoint: null,
+    entrypoints: [],
+    matchRules: [],
     isHttps: true,
     insecureSkipVerify: false,
     enabled: true,
@@ -44,6 +57,8 @@ export function useServiceForm({ service, defaultDuration }: UseServiceFormOptio
         targetIp: service.targetIp,
         targetPort: service.targetPort,
         entrypoint: service.entrypoint || null,
+        entrypoints: serviceEntrypoints(service),
+        matchRules: parseMatchRules(service.matchRules ?? null),
         isHttps: service.isHttps,
         insecureSkipVerify: service.insecureSkipVerify,
         enabled: service.enabled,

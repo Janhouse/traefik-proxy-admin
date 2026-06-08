@@ -3,192 +3,142 @@
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Settings, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { TraefikConfigDialog } from "@/components/traefik-config-dialog";
 import { AppFooter } from "@/components/app-footer";
+import { Toaster } from "@/components/toaster";
 
 interface AppLayoutProps {
   children: React.ReactNode;
+}
+
+const NAV: { href: string; label: string; match: (p: string) => boolean }[] = [
+  { href: "/", label: "Dashboard", match: (p) => p === "/" },
+  { href: "/services", label: "Services", match: (p) => p.startsWith("/services") },
+  { href: "/domains", label: "Domains", match: (p) => p.startsWith("/domains") },
+  { href: "/runtime", label: "Runtime", match: (p) => p.startsWith("/runtime") },
+  { href: "/security", label: "Security", match: (p) => p.startsWith("/security") },
+  { href: "/sessions", label: "Sessions", match: (p) => p.startsWith("/sessions") },
+  { href: "/config", label: "Config", match: (p) => p.startsWith("/config") },
+];
+
+function BrandMark() {
+  return (
+    <span className="brand-mark">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-4 w-4"
+      >
+        <circle cx="5" cy="6" r="2" />
+        <circle cx="5" cy="18" r="2" />
+        <circle cx="19" cy="12" r="2" />
+        <path d="M7 6h6a4 4 0 0 1 4 4M7 18h6a4 4 0 0 0 4-4" />
+      </svg>
+    </span>
+  );
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isActive = (path: string) => pathname === path;
-
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
-      {/* Header */}
-      <div className="border-b bg-white dark:bg-gray-800 flex-shrink-0">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                Traefik Admin
-              </h1>
-              <nav className="hidden md:flex space-x-6">
-                <NextLink
-                  href="/"
-                  className={
-                    isActive("/")
-                      ? "text-gray-900 dark:text-gray-100 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                  }
-                >
-                  Services
-                </NextLink>
-                <NextLink
-                  href="/domains"
-                  className={
-                    isActive("/domains")
-                      ? "text-gray-900 dark:text-gray-100 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                  }
-                >
-                  Domains
-                </NextLink>
-                <NextLink
-                  href="/security"
-                  className={
-                    isActive("/security")
-                      ? "text-gray-900 dark:text-gray-100 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                  }
-                >
-                  Security
-                </NextLink>
-                <NextLink
-                  href="/sessions"
-                  className={
-                    isActive("/sessions")
-                      ? "text-gray-900 dark:text-gray-100 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                  }
-                >
-                  Sessions
-                </NextLink>
-                <NextLink
-                  href="/config"
-                  className={
-                    isActive("/config")
-                      ? "text-gray-900 dark:text-gray-100 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                  }
-                >
-                  Config
-                </NextLink>
-              </nav>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="hidden md:flex items-center gap-2">
-                <TraefikConfigDialog
-                  trigger={
-                    <Button variant="outline" size="sm">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Traefik Config
-                    </Button>
-                  }
-                />
-                <ThemeToggle />
-              </div>
-              {/* Mobile menu button */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="md:hidden"
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+    <div className="flex min-h-screen flex-col">
+      <header className="app-header">
+        <div className="mx-auto flex h-[60px] w-full max-w-[1240px] items-center gap-5 px-4 sm:px-6">
+          <NextLink
+            href="/"
+            className="flex items-center gap-2.5 whitespace-nowrap text-base font-bold tracking-tight text-foreground"
+          >
+            <BrandMark />
+            Traefik Admin
+          </NextLink>
+
+          <nav className="hidden items-center gap-0.5 lg:flex">
+            {NAV.map((item) => (
+              <NextLink
+                key={item.href}
+                href={item.href}
+                className={`nav-link ${item.match(pathname) ? "active" : ""}`}
               >
-                {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-              </Button>
+                {item.label}
+              </NextLink>
+            ))}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-2.5">
+            <div className="hidden items-center gap-2.5 sm:flex">
+              <NextLink
+                href="/traefik-config"
+                className={`icon-btn !w-auto gap-2 px-3 text-[13.5px] font-semibold ${
+                  pathname.startsWith("/traefik-config")
+                    ? "text-[var(--brand)]"
+                    : "text-foreground"
+                }`}
+              >
+                <Settings className="h-4 w-4" />
+                <span className="hidden md:inline">Traefik Config</span>
+              </NextLink>
             </div>
+            <ThemeToggle />
+            <button
+              type="button"
+              className="icon-btn lg:hidden"
+              aria-label="Menu"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+            >
+              {mobileMenuOpen ? (
+                <X className="h-[18px] w-[18px]" />
+              ) : (
+                <Menu className="h-[18px] w-[18px]" />
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Mobile menu */}
+        {/* Mobile sheet */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t bg-white dark:bg-gray-800">
-            <div className="container mx-auto px-4 py-4 space-y-3">
-              <NextLink
-                href="/"
-                className={`block ${
-                  isActive("/")
-                    ? "text-gray-900 dark:text-gray-100 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Services
-              </NextLink>
-              <NextLink
-                href="/domains"
-                className={`block ${
-                  isActive("/domains")
-                    ? "text-gray-900 dark:text-gray-100 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Domains
-              </NextLink>
-              <NextLink
-                href="/security"
-                className={`block ${
-                  isActive("/security")
-                    ? "text-gray-900 dark:text-gray-100 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Security
-              </NextLink>
-              <NextLink
-                href="/sessions"
-                className={`block ${
-                  isActive("/sessions")
-                    ? "text-gray-900 dark:text-gray-100 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Sessions
-              </NextLink>
-              <NextLink
-                href="/config"
-                className={`block ${
-                  isActive("/config")
-                    ? "text-gray-900 dark:text-gray-100 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Config
-              </NextLink>
-              <div className="flex items-center gap-2 pt-2 border-t">
-                <TraefikConfigDialog
-                  trigger={
-                    <Button variant="outline" size="sm">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Traefik Config
-                    </Button>
-                  }
-                />
-                <ThemeToggle />
+          <div className="border-t bg-[var(--surface-2)] lg:hidden">
+            <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-1 px-4 py-3 sm:px-6">
+              {NAV.map((item) => (
+                <NextLink
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`rounded-[var(--radius-sm)] px-3 py-2.5 text-sm font-medium ${
+                    item.match(pathname)
+                      ? "bg-[var(--grad-brand-soft)] text-[var(--brand)]"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {item.label}
+                </NextLink>
+              ))}
+              <div className="mt-2 border-t pt-3 sm:hidden">
+                <NextLink
+                  href="/traefik-config"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="icon-btn !w-auto gap-2 px-3 text-[13.5px] font-semibold text-foreground"
+                >
+                  <Settings className="h-4 w-4" />
+                  Traefik Config
+                </NextLink>
               </div>
             </div>
           </div>
         )}
-      </div>
+      </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        <div className="container mx-auto px-4 py-8 flex-1">
-          {children}
-        </div>
+      <div className="flex flex-1 flex-col">
+        {children}
         <AppFooter />
       </div>
+      <Toaster />
     </div>
   );
 }

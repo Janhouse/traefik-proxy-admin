@@ -80,7 +80,7 @@ export function BasicAuthConfigTable({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
+            <Shield className="h-5 w-5 text-[var(--brand)]" />
             Basic Authentication Configurations
           </CardTitle>
           <CardDescription>
@@ -93,34 +93,17 @@ export function BasicAuthConfigTable({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Basic Authentication Configurations
-            </CardTitle>
-            <CardDescription>
-              Manage basic authentication configurations and users for your services
-            </CardDescription>
-          </div>
-          <Button onClick={onAddConfig} className="w-full sm:w-auto">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Configuration
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         {configs.length === 0 ? (
-          <div className="text-center py-8">
-            <Shield className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+          <div className="py-8 text-center">
+            <Shield className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+            <h3 className="mb-2 text-lg font-medium">
               No configurations found
             </h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">
+            <p className="mb-4 text-muted-foreground">
               Get started by creating your first basic authentication configuration.
             </p>
-            <Button onClick={onAddConfig}>
+            <Button onClick={onAddConfig} className="btn-brand">
               <Plus className="mr-2 h-4 w-4" />
               Add Configuration
             </Button>
@@ -131,15 +114,15 @@ export function BasicAuthConfigTable({
               const isExpanded = expandedConfigs.has(config.id);
 
               return (
-                <div key={config.id} className="border rounded-lg">
+                <div key={config.id} className="rounded-lg border border-[var(--border-soft)]">
                   <div className="p-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-center gap-3">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => onToggleExpansion(config.id)}
-                          className="p-1 h-auto"
+                          className="h-auto p-1"
                         >
                           {isExpanded ? (
                             <ChevronDown className="h-4 w-4" />
@@ -147,21 +130,21 @@ export function BasicAuthConfigTable({
                             <ChevronRight className="h-4 w-4" />
                           )}
                         </Button>
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                           <h3 className="font-medium">{config.name}</h3>
-                          <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                          <Badge variant="outline" className="flex w-fit items-center gap-1">
                             <Users className="h-3 w-3" />
                             {config.users?.length || 0} users
                           </Badge>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => onEditConfig(config)}
                         >
-                          <Edit className="h-4 w-4 mr-1" />
+                          <Edit className="mr-1 h-4 w-4" />
                           Edit
                         </Button>
                         <ConfirmDialog
@@ -170,9 +153,9 @@ export function BasicAuthConfigTable({
                               variant="outline"
                               size="sm"
                               disabled={deletingConfig === config.id}
-                              className="text-red-600 hover:text-red-700"
+                              className="text-[var(--danger)] hover:text-[var(--danger)]"
                             >
-                              <Trash2 className="h-4 w-4 mr-1" />
+                              <Trash2 className="mr-1 h-4 w-4" />
                               Delete
                             </Button>
                           }
@@ -188,22 +171,22 @@ export function BasicAuthConfigTable({
 
                   {config.description && (
                     <div className="px-4 pb-2">
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                      <p className="text-sm text-muted-foreground">
                         {config.description}
                       </p>
                     </div>
                   )}
 
                   {isExpanded && (
-                    <div className="border-t p-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                    <div className="border-t border-[var(--border-soft)] p-4">
+                      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <h4 className="font-medium">Users</h4>
                         <Button
                           size="sm"
                           onClick={() => onAddUser(config.id)}
                           className="w-full sm:w-auto"
                         >
-                          <User className="h-4 w-4 mr-1" />
+                          <User className="mr-1 h-4 w-4" />
                           Add User
                         </Button>
                       </div>
@@ -211,19 +194,22 @@ export function BasicAuthConfigTable({
                       {config.users && config.users.length > 0 ? (
                         <div className="space-y-2">
                           {config.users.map((user) => (
-                            <div key={user.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                            <div
+                              key={user.id}
+                              className="flex flex-col gap-3 rounded-lg bg-[var(--surface-2)] p-3 sm:flex-row sm:items-center sm:justify-between"
+                            >
                               <div className="flex items-center gap-2">
-                                <User className="h-4 w-4 text-gray-500" />
+                                <User className="h-4 w-4 text-muted-foreground" />
                                 <span className="font-medium">{user.username}</span>
                               </div>
-                              <div className="flex items-center gap-2 flex-wrap">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => onEditUser(user)}
                                   className="w-full sm:w-auto"
                                 >
-                                  <Edit className="h-4 w-4 mr-1" />
+                                  <Edit className="mr-1 h-4 w-4" />
                                   Edit
                                 </Button>
                                 <ConfirmDialog
@@ -232,9 +218,9 @@ export function BasicAuthConfigTable({
                                       variant="outline"
                                       size="sm"
                                       disabled={deletingUser === user.id}
-                                      className="text-red-600 hover:text-red-700 w-full sm:w-auto"
+                                      className="w-full text-[var(--danger)] hover:text-[var(--danger)] sm:w-auto"
                                     >
-                                      <Trash2 className="h-4 w-4 mr-1" />
+                                      <Trash2 className="mr-1 h-4 w-4" />
                                       Delete
                                     </Button>
                                   }
@@ -249,7 +235,7 @@ export function BasicAuthConfigTable({
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                        <p className="py-4 text-center text-sm text-muted-foreground">
                           No users configured. Add users to enable authentication.
                         </p>
                       )}

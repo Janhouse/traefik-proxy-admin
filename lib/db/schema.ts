@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, varchar, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, varchar, uuid, index } from "drizzle-orm/pg-core";
 
 export const basicAuthConfigs = pgTable("basic_auth_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -39,7 +39,9 @@ export const services = pgTable("services", {
   domainId: uuid("domain_id").references(() => domains.id, { onDelete: "restrict" }).notNull(),
   targetIp: varchar("target_ip", { length: 45 }).notNull(),
   targetPort: integer("target_port").notNull(),
-  entrypoint: varchar("entrypoint", { length: 255 }), // Optional per-service entrypoint override
+  entrypoint: varchar("entrypoint", { length: 255 }), // legacy single entrypoint (kept for back-compat)
+  entrypoints: text("entrypoints"), // JSON array of entrypoint names (preferred)
+  matchRules: text("match_rules"), // JSON array of structured Traefik v3 match rules
   isHttps: boolean("is_https").default(false).notNull(),
   insecureSkipVerify: boolean("insecure_skip_verify").default(false).notNull(), // Skip TLS certificate validation for target service
   enabled: boolean("enabled").default(true).notNull(),
@@ -93,6 +95,33 @@ export const appConfig = pgTable("app_config", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Rolling per-router request-traffic samples scraped from Traefik's Prometheus
+// /metrics endpoint. Each row is the DELTA for one router over one scrape tick
+// (counters diffed against the previous scrape), so reads are pure sums and
+// counter resets can't produce negative values. Old rows are pruned by the
+// metrics scheduler (TRAEFIK_METRICS_RETENTION_MINUTES).
+export const routerMetricSamples = pgTable(
+  "router_metric_samples",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ts: timestamp("ts").defaultNow().notNull(),
+    // The matched admin service (null only transiently; unmatched routers are skipped).
+    serviceId: uuid("service_id").references(() => services.id, { onDelete: "cascade" }),
+    router: varchar("router", { length: 512 }).notNull(), // router label, @provider stripped
+    req2xx: integer("req_2xx").default(0).notNull(),
+    req3xx: integer("req_3xx").default(0).notNull(),
+    req4xx: integer("req_4xx").default(0).notNull(),
+    req5xx: integer("req_5xx").default(0).notNull(),
+    reqOther: integer("req_other").default(0).notNull(),
+    durSumMs: integer("dur_sum_ms").default(0).notNull(), // delta of duration _sum, in ms
+    durCount: integer("dur_count").default(0).notNull(), // delta of duration _count
+  },
+  (t) => [
+    index("idx_router_metric_samples_ts").on(t.ts),
+    index("idx_router_metric_samples_service_ts").on(t.serviceId, t.ts),
+  ]
+);
+
 export type BasicAuthConfig = typeof basicAuthConfigs.$inferSelect;
 export type NewBasicAuthConfig = typeof basicAuthConfigs.$inferInsert;
 export type BasicAuthUser = typeof basicAuthUsers.$inferSelect;
@@ -109,3 +138,5 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type AppConfig = typeof appConfig.$inferSelect;
 export type NewAppConfig = typeof appConfig.$inferInsert;
+export type RouterMetricSample = typeof routerMetricSamples.$inferSelect;
+export type NewRouterMetricSample = typeof routerMetricSamples.$inferInsert;

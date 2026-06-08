@@ -1,5 +1,6 @@
 import "server-only";
 import { serviceScheduler } from "./service-scheduler";
+import { metricsScheduler } from "./metrics-source";
 
 let isInitialized = false;
 
@@ -13,7 +14,10 @@ async function initializeServices() {
   try {
     // Start the service auto-disable scheduler
     await serviceScheduler.start();
-    
+
+    // Start the Traefik metrics scraper (no-op if not configured)
+    await metricsScheduler.start();
+
     isInitialized = true;
     console.log("Application services initialized successfully");
   } catch (error) {

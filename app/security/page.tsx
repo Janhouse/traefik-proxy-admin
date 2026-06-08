@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/app-layout";
+import { PageBand, PageMain } from "@/components/page-band";
+import { Button } from "@/components/ui/button";
+import { Plus, Key } from "lucide-react";
 import { BasicAuthConfigTable } from "@/components/basic-auth-config-table";
 import { BasicAuthConfigDialog } from "@/components/basic-auth-config-dialog";
 import { BasicAuthUserDialog } from "@/components/basic-auth-user-dialog";
@@ -77,43 +80,65 @@ export default function SecurityPage() {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Security Management</h1>
-          <p className="text-gray-600 dark:text-gray-400">
-            Manage basic authentication configurations and users
-          </p>
+      <PageBand
+        eyebrow="Manage"
+        title="Security"
+        subtitle="Reusable basic-auth credentials & access policies"
+      />
+
+      <PageMain>
+        <div className="space-y-6">
+          <div className="sec-head">
+            <span className="ic">
+              <Key className="h-[17px] w-[17px]" />
+            </span>
+            <div>
+              <h2 className="flex items-center gap-2">
+                Basic-auth configurations
+                <span className="count">{configs.length}</span>
+              </h2>
+              <div className="sub">
+                Reusable username / password sets referenced by service
+                basic-auth rules.
+              </div>
+            </div>
+            <div className="right">
+              <Button className="btn-brand" onClick={handleAddConfig}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add configuration
+              </Button>
+            </div>
+          </div>
+
+          <BasicAuthConfigTable
+            configs={configs}
+            expandedConfigs={expandedConfigs}
+            loading={loading}
+            onToggleExpansion={toggleConfigExpansion}
+            onAddConfig={handleAddConfig}
+            onEditConfig={handleEditConfig}
+            onDeleteConfig={deleteConfig}
+            onAddUser={handleAddUser}
+            onEditUser={handleEditUser}
+            onDeleteUser={deleteUser}
+          />
+
+          <BasicAuthConfigDialog
+            open={showConfigDialog}
+            onOpenChange={setShowConfigDialog}
+            editingConfig={editingConfig}
+            onSubmit={handleConfigSubmit}
+          />
+
+          <BasicAuthUserDialog
+            open={showUserDialog}
+            onOpenChange={setShowUserDialog}
+            editingUser={editingUser}
+            parentConfigId={userParentConfigId}
+            onSubmit={handleUserSubmit}
+          />
         </div>
-
-        <BasicAuthConfigTable
-          configs={configs}
-          expandedConfigs={expandedConfigs}
-          loading={loading}
-          onToggleExpansion={toggleConfigExpansion}
-          onAddConfig={handleAddConfig}
-          onEditConfig={handleEditConfig}
-          onDeleteConfig={deleteConfig}
-          onAddUser={handleAddUser}
-          onEditUser={handleEditUser}
-          onDeleteUser={deleteUser}
-        />
-
-        <BasicAuthConfigDialog
-          open={showConfigDialog}
-          onOpenChange={setShowConfigDialog}
-          editingConfig={editingConfig}
-          onSubmit={handleConfigSubmit}
-        />
-
-        <BasicAuthUserDialog
-          open={showUserDialog}
-          onOpenChange={setShowUserDialog}
-          editingUser={editingUser}
-          parentConfigId={userParentConfigId}
-          onSubmit={handleUserSubmit}
-        />
-      </div>
+      </PageMain>
     </AppLayout>
   );
 }

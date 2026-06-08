@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { DurationSelect } from "@/components/duration-select";
-import { X, Save, AlertCircle } from "lucide-react";
+import { MiddlewareSelect } from "@/components/traefik/middleware-select";
+import { RouteRuleEditor } from "@/components/traefik/route-rule-editor";
+import { Save } from "lucide-react";
 import { useServiceForm, type ServiceFormData } from "@/hooks/use-service-form";
-import { useServiceHeaders } from "@/hooks/use-service-headers";
 import { useDomains } from "@/lib/hooks/use-domains";
+import { parseMiddlewareNames, serviceEntrypoints } from "@/lib/service-display";
+import { parseMatchRules, type HostnameMode } from "@/lib/route-rule";
 import type { Service } from "./service-table";
 
 interface ServiceFormProps {
@@ -24,6 +24,20 @@ interface ServiceFormProps {
   submitting?: boolean;
 }
 
+function extractHostHeader(requestHeaders?: string | null): string {
+  if (!requestHeaders) return "";
+  try {
+    let headers: unknown = JSON.parse(requestHeaders);
+    if (typeof headers === "string") headers = JSON.parse(headers);
+    if (headers && typeof headers === "object" && "Host" in headers) {
+      return String((headers as Record<string, string>).Host || "");
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
 export function ServiceForm({
   service,
   defaultDuration,
@@ -31,344 +45,305 @@ export function ServiceForm({
   onCancel,
   submitting = false,
 }: ServiceFormProps) {
-
-  // Use custom hooks for form management
   const { formData, updateFormData, hasUnsavedChanges } = useServiceForm({
     service,
     defaultDuration,
   });
-
-  const { middlewareText, setMiddlewareText, hostHeader, setHostHeader } = useServiceHeaders({
-    formData,
-    updateFormData,
-  });
-
   const { domains, fetchDomains } = useDomains();
+  const [hostHeader, setHostHeader] = useState(() =>
+    extractHostHeader(service?.requestHeaders)
+  );
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     fetchDomains();
   }, [fetchDomains]);
 
-  // Set default domain if no domain is selected and we have domains
-  useEffect(() => {
-    if (!formData.domainId && domains.length > 0 && !service) {
-      const defaultDomain = domains.find(d => d.isDefault) || domains[0];
-      if (defaultDomain) {
-        updateFormData({ domainId: defaultDomain.id });
-      }
-    }
-  }, [domains, formData.domainId, service, updateFormData]);
+  const mwNames: string[] = Array.isArray(formData.middlewares)
+    ? formData.middlewares
+    : parseMiddlewareNames(formData.middlewares ?? "");
 
-  // Get the currently selected domain for display
-  const selectedDomain = domains.find(d => d.id === formData.domainId);
+  const routeInitial = useMemo(
+    () => ({
+      domainId: service?.domainId || "",
+      subdomain: service?.subdomain || "",
+      hostnameMode: (service?.hostnameMode as HostnameMode) || "subdomain",
+      customHostnames: service?.customHostnames ?? null,
+      entrypoints: service ? serviceEntrypoints(service) : [],
+      matchRules: parseMatchRules(service?.matchRules ?? null),
+    }),
+    [service]
+  );
 
+  const handleHostHeader = (value: string) => {
+    setHostHeader(value);
+    updateFormData({
+      requestHeaders: (value.trim()
+        ? { Host: value.trim() }
+        : "") as unknown as string,
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSubmit(formData);
+    if (blocked) return;
+    await onSubmit({ ...formData, middlewares: mwNames });
   };
 
   const handleCancel = () => {
     if (hasUnsavedChanges) {
-      const confirmed = window.confirm("You have unsaved changes. Are you sure you want to cancel?");
-      if (!confirmed) return;
+      const ok = window.confirm("You have unsaved changes. Discard and leave?");
+      if (!ok) return;
     }
     onCancel();
   };
 
   return (
-    <UnsavedChangesGuard
-      hasUnsavedChanges={hasUnsavedChanges}
-    >
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>
-                {service ? "Edit Service" : "Add New Service"}
-              </CardTitle>
-              <CardDescription>
-                {service
-                  ? "Update service configuration"
-                  : "Configure a new proxy service"
-                }
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCancel}
-              disabled={submitting}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Service Name</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => updateFormData({ name: e.target.value })}
-                  placeholder="My Service"
-                  required
-                  disabled={submitting}
-                />
-              </div>
+    <UnsavedChangesGuard hasUnsavedChanges={hasUnsavedChanges}>
+      <form onSubmit={handleSubmit} className="mx-auto max-w-[920px]">
+        {/* Service name */}
+        <div className="mb-7 flex flex-col gap-1.5">
+          <Label htmlFor="name">Service Name</Label>
+          <Input
+            id="name"
+            value={formData.name}
+            onChange={(e) => updateFormData({ name: e.target.value })}
+            placeholder="My Service"
+            required
+            disabled={submitting}
+          />
+          <span className="text-[12px] text-[var(--meta)]">
+            A human label for this route — used in lists and generated router
+            names.
+          </span>
+        </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="domain">Domain</Label>
-                <Select
-                  value={formData.domainId || ""}
-                  onValueChange={(value) => {
-                    // Ignore empty string changes - spurious event from Select component
-                    if (value === "") {
-                      return;
-                    }
-                    updateFormData({ domainId: value });
-                  }}
-                  disabled={submitting || domains.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a domain" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {domains.map((domain) => (
-                      <SelectItem key={domain.id} value={domain.id}>
-                        {domain.name} ({domain.domain})
-                        {domain.isDefault && " - Default"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+        {/* 1 — Domain & routing */}
+        <Section
+          n={1}
+          title="Domain & routing"
+          desc="Compose the public hostname, pick entrypoints, then refine the match rule."
+        >
+          <RouteRuleEditor
+            initial={routeInitial}
+            domains={domains}
+            serviceId={service?.id}
+            onChange={(v) => updateFormData(v)}
+            onBlockedChange={setBlocked}
+            disabled={submitting}
+          />
+        </Section>
 
-              <div className="space-y-2">
-                <Label htmlFor="hostnameMode">Hostname Mode</Label>
-                <Select
-                  value={formData.hostnameMode || "subdomain"}
-                  onValueChange={(value: "subdomain" | "apex" | "custom") => {
-                    updateFormData({
-                      hostnameMode: value,
-                      // Clear subdomain when switching to apex or custom mode
-                      ...(value !== "subdomain" && { subdomain: undefined }),
-                      // Clear custom hostnames when switching away from custom mode
-                      ...(value !== "custom" && { customHostnames: undefined }),
-                    });
-                  }}
-                  disabled={submitting}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select hostname mode" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="subdomain">Subdomain</SelectItem>
-                    <SelectItem value="apex">Apex Domain</SelectItem>
-                    <SelectItem value="custom">Custom Hostnames</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500">
-                  {formData.hostnameMode === "subdomain" && "Service will be accessible at [subdomain]." + (selectedDomain?.domain || "domain.com")}
-                  {formData.hostnameMode === "apex" && "Service will be accessible at " + (selectedDomain?.domain || "domain.com")}
-                  {formData.hostnameMode === "custom" && "Service will be accessible at custom hostnames you specify"}
-                </p>
-              </div>
-
-              {formData.hostnameMode === "subdomain" && (
-                <div className="space-y-2">
-                  <Label htmlFor="subdomain">Subdomain</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="subdomain"
-                      value={formData.subdomain || ""}
-                      onChange={(e) => updateFormData({ subdomain: e.target.value })}
-                      placeholder="myservice"
-                      required
-                      disabled={submitting}
-                    />
-                    <span className="text-sm text-gray-500">
-                      .{selectedDomain?.domain || "domain.com"}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {formData.hostnameMode === "custom" && (
-                <div className="space-y-2">
-                  <Label htmlFor="customHostnames">Custom Hostnames</Label>
-                  <Textarea
-                    id="customHostnames"
-                    value={(() => {
-                      try {
-                        return formData.customHostnames
-                          ? JSON.parse(formData.customHostnames).join('\n')
-                          : "";
-                      } catch (error) {
-                        console.warn("Failed to parse custom hostnames:", error);
-                        return formData.customHostnames || "";
-                      }
-                    })()}
-                    onChange={(e) => {
-                      const hostnames = e.target.value
-                        .split('\n')
-                        .map(h => h.trim())
-                        .filter(h => h.length > 0);
-                      updateFormData({
-                        customHostnames: hostnames.length > 0 ? JSON.stringify(hostnames) : null
-                      });
-                    }}
-                    placeholder="app.example.com&#10;api.example.com&#10;www.example.com"
-                    rows={4}
-                    disabled={submitting}
-                  />
-                  <p className="text-xs text-gray-500">
-                    Enter one hostname per line. These hostnames will be used as-is for routing.
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="targetIp">Target IP</Label>
-                <Input
-                  id="targetIp"
-                  value={formData.targetIp}
-                  onChange={(e) => updateFormData({ targetIp: e.target.value })}
-                  placeholder="192.168.1.100"
-                  required
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="targetPort">Target Port</Label>
-                <Input
-                  id="targetPort"
-                  type="number"
-                  value={formData.targetPort}
-                  onChange={(e) => updateFormData({ targetPort: parseInt(e.target.value) || 80 })}
-                  placeholder="80"
-                  required
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="entrypoint">Entrypoint (optional)</Label>
-                <Input
-                  id="entrypoint"
-                  value={formData.entrypoint || ""}
-                  onChange={(e) => updateFormData({ entrypoint: e.target.value || null })}
-                  placeholder="websecure"
-                  disabled={submitting}
-                />
-                <p className="text-xs text-gray-500">
-                  Override the default entrypoint for this service
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="isHttps"
-                  checked={formData.isHttps}
-                  onCheckedChange={(checked) => updateFormData({ isHttps: checked })}
-                  disabled={submitting}
-                />
-                <Label htmlFor="isHttps">Target uses HTTPS</Label>
-              </div>
-
-              {formData.isHttps && (
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="insecureSkipVerify"
-                    checked={formData.insecureSkipVerify}
-                    onCheckedChange={(checked) => updateFormData({ insecureSkipVerify: checked })}
-                    disabled={submitting}
-                  />
-                  <div className="space-y-1">
-                    <Label htmlFor="insecureSkipVerify">Skip TLS Certificate Validation</Label>
-                    <p className="text-xs text-gray-500">
-                      Enable for services with self-signed or invalid certificates
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="enabled"
-                  checked={formData.enabled}
-                  onCheckedChange={(checked) => updateFormData({ enabled: checked })}
-                  disabled={submitting}
-                />
-                <Label htmlFor="enabled">Enable service</Label>
-              </div>
-
-              <DurationSelect
-                value={formData.enableDurationMinutes}
-                onValueChange={(duration) => updateFormData({ enableDurationMinutes: duration })}
+        {/* 2 — Target backend */}
+        <Section
+          n={2}
+          title="Target backend"
+          desc="Where Traefik forwards the request."
+        >
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+            <FieldCol label="Target IP">
+              <Input
+                className="font-mono"
+                value={formData.targetIp}
+                onChange={(e) => updateFormData({ targetIp: e.target.value })}
+                placeholder="192.168.1.100"
+                required
                 disabled={submitting}
               />
+            </FieldCol>
+            <FieldCol label="Target Port">
+              <Input
+                type="number"
+                className="font-mono"
+                value={formData.targetPort}
+                onChange={(e) =>
+                  updateFormData({ targetPort: parseInt(e.target.value) || 80 })
+                }
+                placeholder="80"
+                required
+                disabled={submitting}
+              />
+            </FieldCol>
 
-              <div className="space-y-2">
-                <Label htmlFor="middlewares">Middlewares (comma-separated)</Label>
-                <Input
-                  id="middlewares"
-                  value={middlewareText}
-                  onChange={(e) => setMiddlewareText(e.target.value)}
-                  placeholder="auth@file, ratelimit@file"
+            <div className="md:col-span-2 flex flex-wrap items-center gap-3.5">
+              <label className="flex cursor-pointer items-center gap-2.5">
+                <Switch
+                  checked={formData.isHttps}
+                  onCheckedChange={(c) => updateFormData({ isHttps: c })}
                   disabled={submitting}
                 />
-                <p className="text-xs text-gray-500">
-                  Optional Traefik middlewares to apply to this service
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="hostHeader">Host Header Override</Label>
-                <Input
-                  id="hostHeader"
-                  value={hostHeader}
-                  onChange={(e) => setHostHeader(e.target.value)}
-                  placeholder="internal-service.local"
-                  disabled={submitting}
-                />
-                <p className="text-xs text-gray-500">
-                  Override the Host header sent to the target service
-                </p>
-              </div>
+                <span className="text-[13.5px] font-semibold">
+                  Target uses HTTPS
+                </span>
+              </label>
+              <span className="text-[12px] text-[var(--meta)]">
+                Forward to <span className="mono">https://</span> instead of{" "}
+                <span className="mono">http://</span> upstream.
+              </span>
             </div>
 
-            {hasUnsavedChanges && (
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                <span className="text-sm text-amber-700 dark:text-amber-300">
-                  You have unsaved changes
+            {formData.isHttps && (
+              <div className="md:col-span-2 flex flex-wrap items-center gap-3.5">
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <Switch
+                    checked={formData.insecureSkipVerify}
+                    onCheckedChange={(c) =>
+                      updateFormData({ insecureSkipVerify: c })
+                    }
+                    disabled={submitting}
+                  />
+                  <span className="text-[13.5px] font-semibold">
+                    Skip TLS certificate validation
+                  </span>
+                </label>
+                <span className="text-[12px] text-[var(--meta)]">
+                  For self-signed or invalid upstream certificates.
                 </span>
               </div>
             )}
 
-            <div className="flex justify-end space-x-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCancel}
+            <FieldCol label="Host Header Override (optional)" full>
+              <Input
+                className="font-mono"
+                value={hostHeader}
+                onChange={(e) => handleHostHeader(e.target.value)}
+                placeholder="internal-service.local"
                 disabled={submitting}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                <Save className="mr-2 h-4 w-4" />
-                {submitting ? "Saving..." : service ? "Update Service" : "Create Service"}
-              </Button>
+              />
+              <span className="text-[12px] text-[var(--meta)]">
+                Override the Host header sent upstream — useful for
+                virtual-hosted backends.
+              </span>
+            </FieldCol>
+          </div>
+        </Section>
+
+        {/* 3 — Middlewares */}
+        <Section
+          n={3}
+          title="Middlewares"
+          desc="Auth, rate-limit, headers — applied in order."
+        >
+          <FieldCol label="Apply middlewares" full>
+            <MiddlewareSelect
+              value={mwNames}
+              onChange={(names) => updateFormData({ middlewares: names })}
+              disabled={submitting}
+            />
+            <span className="text-[12px] text-[var(--meta)]">
+              Pick middlewares discovered from the Traefik API. The pill shows
+              where each is defined.
+            </span>
+          </FieldCol>
+        </Section>
+
+        {/* 4 — Lifecycle & access */}
+        <Section
+          n={4}
+          title="Lifecycle & access"
+          desc="Enable state and the auto-disable safety timer."
+        >
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+            <div className="md:col-span-2 flex flex-wrap items-center gap-3.5">
+              <label className="flex cursor-pointer items-center gap-2.5">
+                <Switch
+                  checked={formData.enabled}
+                  onCheckedChange={(c) => updateFormData({ enabled: c })}
+                  disabled={submitting}
+                />
+                <span className="text-[13.5px] font-semibold">
+                  Enable service
+                </span>
+              </label>
+              <span className="text-[12px] text-[var(--meta)]">
+                When on, this route is pushed to Traefik&rsquo;s dynamic config.
+              </span>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+            <div>
+              <DurationSelect
+                value={formData.enableDurationMinutes}
+                onValueChange={(d) =>
+                  updateFormData({ enableDurationMinutes: d })
+                }
+                disabled={submitting}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <div className="mt-7 flex items-center justify-end gap-2.5 border-t pt-[18px]">
+          {blocked && (
+            <span className="mr-auto text-[12px] text-[var(--danger)]">
+              Resolve the route collision above before saving.
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleCancel}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            className="btn-brand"
+            disabled={submitting || blocked}
+          >
+            <Save className="h-4 w-4" />
+            {submitting
+              ? "Saving…"
+              : service
+                ? "Update Service"
+                : "Create Service"}
+          </Button>
+        </div>
+      </form>
     </UnsavedChangesGuard>
+  );
+}
+
+/* ── layout helpers ───────────────────────────────────────────────────────── */
+
+function Section({
+  n,
+  title,
+  desc,
+  children,
+}: {
+  n: number;
+  title: string;
+  desc: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-7 first:mt-0">
+      <div className="sec-title">
+        <span className="step-num">{n}</span>
+        {title}
+        <span className="ln" />
+      </div>
+      <p className="fs-desc">{desc}</p>
+      <div className="rounded-[var(--radius-lg)] border bg-card p-5 shadow-[var(--shadow-md)] sm:p-[22px]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FieldCol({
+  label,
+  children,
+  full,
+}: {
+  label: string;
+  children: React.ReactNode;
+  full?: boolean;
+}) {
+  return (
+    <div className={`flex flex-col gap-1.5 ${full ? "md:col-span-2" : ""}`}>
+      <Label>{label}</Label>
+      {children}
+    </div>
   );
 }

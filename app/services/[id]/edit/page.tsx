@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
+import { PageBand, PageMain } from "@/components/page-band";
 import { ServiceForm } from "@/components/service-form";
+import { StatusBadge } from "@/components/traefik/status-badge";
 import { useServices } from "@/hooks/use-services";
 import { useRouter, useParams } from "next/navigation";
+import { toast } from "@/components/toaster";
 import type { Service } from "@/components/service-table";
 import type { ServiceFormData } from "@/hooks/use-service-form";
 
@@ -21,49 +22,41 @@ export default function EditServicePage() {
   const serviceId = params.id as string;
 
   useEffect(() => {
-    const loadService = async () => {
+    const load = async () => {
       try {
-        const foundService = await fetchServiceById(serviceId);
-        if (foundService) {
-          setService(foundService);
-        } else {
-          console.log("Service not found, redirecting to home");
-          router.push("/");
-        }
+        const found = await fetchServiceById(serviceId);
+        if (found) setService(found);
+        else router.push("/services");
       } catch (error) {
         console.error("Failed to load service:", error);
-        router.push("/");
+        router.push("/services");
       } finally {
         setLoading(false);
       }
     };
-
-    loadService();
+    load();
   }, [serviceId, fetchServiceById, router]);
 
   const handleSubmit = async (serviceData: ServiceFormData) => {
     if (!service) return;
-
     setSaving(true);
     try {
       await saveService(serviceData, service);
-      router.push("/");
+      toast("Service updated");
+      router.push("/services");
     } catch (error) {
       console.error("Failed to save service:", error);
+      toast("Failed to update service", "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleCancel = () => {
-    router.push("/");
-  };
-
   if (loading) {
     return (
       <AppLayout>
-        <div className="flex items-center justify-center py-12">
-          <div className="text-lg">Loading service...</div>
+        <div className="flex items-center justify-center py-16 text-muted-foreground">
+          Loading service…
         </div>
       </AppLayout>
     );
@@ -72,8 +65,8 @@ export default function EditServicePage() {
   if (!service) {
     return (
       <AppLayout>
-        <div className="flex items-center justify-center py-12">
-          <div className="text-lg text-red-600">Service not found</div>
+        <div className="flex items-center justify-center py-16 text-[var(--danger)]">
+          Service not found
         </div>
       </AppLayout>
     );
@@ -81,31 +74,23 @@ export default function EditServicePage() {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            onClick={handleCancel}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Services
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold">Edit Service</h1>
-            <p className="text-muted-foreground">
-              Modify {service.name}
-            </p>
-          </div>
-        </div>
-
+      <PageBand
+        eyebrow="Edit Service"
+        title={service.name}
+        subtitle="Modify the route, target and access policy for this service."
+        backHref="/services"
+        backLabel="Back to Services"
+        actions={<StatusBadge enabled={service.enabled} />}
+      />
+      <PageMain>
         <ServiceForm
           service={service}
           defaultDuration={defaultDuration}
           onSubmit={handleSubmit}
-          onCancel={handleCancel}
+          onCancel={() => router.push("/services")}
           submitting={saving}
         />
-      </div>
+      </PageMain>
     </AppLayout>
   );
 }
