@@ -5,7 +5,7 @@ import "server-only";
 
 const TIMEOUT_MS = 4000;
 
-export class MetricsFetchError extends Error {
+class MetricsFetchError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
     this.name = "MetricsFetchError";

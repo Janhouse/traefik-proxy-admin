@@ -24,14 +24,14 @@ const BARS = 24;
 
 type StatusKey = "req2xx" | "req3xx" | "req4xx" | "req5xx" | "reqOther";
 
-export function getMetricsUrl(): string | null {
+function getMetricsUrl(): string | null {
   const explicit = process.env.TRAEFIK_METRICS_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
   const base = getTraefikApiUrl();
   return base ? `${base}/metrics` : null;
 }
 
-export function isMetricsConfigured(): boolean {
+function isMetricsConfigured(): boolean {
   return getMetricsUrl() !== null;
 }
 

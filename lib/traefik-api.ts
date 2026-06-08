@@ -27,7 +27,7 @@ export function isTraefikApiConfigured(): boolean {
   return getTraefikApiUrl() !== null;
 }
 
-export class TraefikApiError extends Error {
+class TraefikApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
     this.name = "TraefikApiError";

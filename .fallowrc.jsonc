@@ -17,5 +17,31 @@
   },
   "rules": {
     "unused-dependencies": "warn"
-  }
+  },
+  "ignoreExports": [
+    {
+      "file": "components/basic-auth-config-table.tsx",
+      "exports": ["*"]
+    },
+    {
+      "file": "lib/dto/service-security.dto.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "lib/dto/service.dto.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "lib/route-rule.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "lib/traefik-api.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "lib/traefik-config.ts",
+      "exports": ["*"]
+    }
+  ]
 }

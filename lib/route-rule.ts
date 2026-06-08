@@ -79,7 +79,7 @@ function clean(v: string): string {
   return String(v ?? "").replace(/`/g, "");
 }
 
-export function matcherArgs(m: MatchRule): string[] {
+function matcherArgs(m: MatchRule): string[] {
   if (m.type === "Method") return [m.method || "GET"];
   const def = matcherDef(m.type);
   if (def.fields.includes("key")) return [m.key || "", m.value || ""];

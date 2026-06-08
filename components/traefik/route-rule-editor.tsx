@@ -34,7 +34,7 @@ interface DomainLite {
   isDefault: boolean;
 }
 
-export interface RouteRuleValue {
+interface RouteRuleValue {
   domainId: string;
   subdomain: string | null;
   hostnameMode: HostnameMode;
