@@ -285,4 +285,8 @@ app/
 
 ## License
 
-[Add your license here]
+Licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+
+This means you are free to use, modify, and distribute this software, but if you
+run a modified version as a network service, you must make your source code
+available to its users. See the [LICENSE](LICENSE) file for the full text.
