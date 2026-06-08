@@ -11,6 +11,7 @@ import {
   getUdpRouters,
   getUdpServices,
   getVersion,
+  getOverview,
   indexServerStatus,
   isTraefikApiConfigured,
   normalizeServerUrl,
@@ -136,6 +137,7 @@ function emptyRuntime(
       udpRouters: 0,
       udpServices: 0,
       plugins: 0,
+      certificates: 0,
     },
     httpRouters: [],
     httpServices: [],
@@ -166,6 +168,7 @@ export async function getRuntimeSnapshot(): Promise<RuntimeResponse> {
       udpRouters,
       udpServices,
       version,
+      overview,
     ] = await Promise.all([
       getEntrypoints().catch(() => []),
       getHttpRouters().catch(() => []),
@@ -177,6 +180,7 @@ export async function getRuntimeSnapshot(): Promise<RuntimeResponse> {
       getUdpRouters().catch(() => []),
       getUdpServices().catch(() => []),
       getVersion().catch(() => ({}) as Awaited<ReturnType<typeof getVersion>>),
+      getOverview().catch(() => null),
     ]);
 
     // service name -> health (for router rows). Index by both the fully
@@ -291,6 +295,7 @@ export async function getRuntimeSnapshot(): Promise<RuntimeResponse> {
         udpRouters: outUdpRouters.length,
         udpServices: outUdpServices.length,
         plugins: plugins.length,
+        certificates: overview?.certificates?.total ?? 0,
       },
       httpRouters: outHttpRouters,
       httpServices: outHttpServices,

@@ -108,7 +108,7 @@ export function RuntimeExplorer() {
           {
             key: "certs",
             label: "Certificates",
-            count: certs?.certificates.length ?? 0,
+            count: certs?.certificates.length ?? c.certificates,
           },
         ],
       },

@@ -166,6 +166,7 @@ export interface RuntimeResponse {
     udpRouters: number;
     udpServices: number;
     plugins: number;
+    certificates: number; // from /api/overview (Traefik v3.7+); 0 otherwise
   };
   httpRouters: RuntimeRouter[];
   httpServices: RuntimeHttpService[];

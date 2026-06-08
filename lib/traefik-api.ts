@@ -142,6 +142,32 @@ export interface TraefikVersion {
   startDate?: string;
 }
 
+export interface TraefikOverviewSection {
+  total: number;
+  warnings: number;
+  errors: number;
+}
+
+export interface TraefikOverview {
+  http?: {
+    routers?: TraefikOverviewSection;
+    services?: TraefikOverviewSection;
+    middlewares?: TraefikOverviewSection;
+  };
+  tcp?: {
+    routers?: TraefikOverviewSection;
+    services?: TraefikOverviewSection;
+    middlewares?: TraefikOverviewSection;
+  };
+  udp?: {
+    routers?: TraefikOverviewSection;
+    services?: TraefikOverviewSection;
+  };
+  certificates?: TraefikOverviewSection; // Traefik v3.7+
+  features?: { tracing?: string; metrics?: string; accessLog?: boolean };
+  providers?: string[];
+}
+
 /** /api/certificates entry (Traefik v3.7+). */
 export interface TraefikCertificate {
   name: string; // SHA-256 fingerprint — also the {certificateID} path param
@@ -185,6 +211,7 @@ export const getUdpRouters = () =>
 export const getUdpServices = () =>
   traefikFetch<TraefikUdpService[]>("/api/udp/services");
 export const getVersion = () => traefikFetch<TraefikVersion>("/api/version");
+export const getOverview = () => traefikFetch<TraefikOverview>("/api/overview");
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
