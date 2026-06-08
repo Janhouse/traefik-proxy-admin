@@ -179,24 +179,27 @@ export interface RuntimeResponse {
   entrypoints: TraefikEntrypointInfo[];
 }
 
-/* ── TLS certificates (probed via SNI; Traefik's API has no cert endpoint) ──── */
+/* ── TLS certificates (from Traefik's /api/certificates, v3.7+) ────────────── */
 
 export interface RuntimeCertificate {
+  name: string; // SHA-256 fingerprint (the {certificateID})
   commonName: string;
   sans: string[];
-  domains: string[]; // router hostnames that resolved to this certificate
-  issuer: string;
+  issuer: string; // issuerOrg, falling back to issuerCN
   serialNumber: string;
   notBefore: string; // ISO
   notAfter: string; // ISO
   daysRemaining: number;
-  selfSigned: boolean;
+  keyType: string;
+  keySize: number;
+  signatureAlgorithm: string;
+  status: string; // "enabled" | "warning" | "expired"
 }
 
 export interface CertificatesResponse {
   configured: boolean;
   reachable: boolean;
-  target?: string; // host:port probed
+  supported: boolean; // false when Traefik predates /api/certificates (< v3.7)
   error?: string;
   certificates: RuntimeCertificate[];
 }

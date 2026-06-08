@@ -161,7 +161,7 @@ export function RuntimeExplorer() {
             <RefreshCw
               className={`h-3.5 w-3.5 ${certsLoading ? "animate-spin" : ""}`}
             />
-            Re-probe
+            Refresh
           </button>
         )}
         <span className="font-mono text-[12.5px] text-[var(--meta)]">
@@ -352,8 +352,8 @@ export function RuntimeExplorer() {
       <p className="mt-4 text-[12px] text-[var(--meta)]">
         Read-only mirror of the Traefik API (
         <span className="mono">/api/http|tcp|udp/*</span>,{" "}
-        <span className="mono">/api/entrypoints</span>). Certificates are read by
-        live TLS probes (SNI) since the API exposes none. Editing happens on the
+        <span className="mono">/api/entrypoints</span>,{" "}
+        <span className="mono">/api/certificates</span>). Editing happens on the
         Services screen.
       </p>
     </div>
@@ -374,12 +374,28 @@ function CertsPanel({
   if (loading && !data) {
     return (
       <div className="rounded-[var(--radius-lg)] border bg-card p-10 text-center text-muted-foreground">
-        Probing certificates over TLS…
+        Loading certificates…
       </div>
     );
   }
   if (!data) return null;
-  if (data.error && data.certificates.length === 0) {
+  if (!data.supported) {
+    return (
+      <div className="callout info">
+        <AlertTriangle className="ico" />
+        <div>
+          <h4 className="text-[13.5px] font-semibold">
+            Certificates API not available
+          </h4>
+          <p className="text-[13px] text-[var(--fg-2)]">
+            {data.error ||
+              "Traefik's /api/certificates endpoint was added in v3.7 — upgrade Traefik to list certificates here."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (!data.reachable) {
     return (
       <div className="callout warn">
         <AlertTriangle className="ico" />
@@ -387,7 +403,9 @@ function CertsPanel({
           <h4 className="text-[13.5px] font-semibold">
             Couldn&rsquo;t read certificates
           </h4>
-          <p className="text-[13px] text-[var(--fg-2)]">{data.error}</p>
+          <p className="text-[13px] text-[var(--fg-2)]">
+            {data.error || "Traefik API unreachable."}
+          </p>
         </div>
       </div>
     );
@@ -395,39 +413,36 @@ function CertsPanel({
 
   return (
     <RuntimeTable
-      minWidth={760}
+      minWidth={820}
       query={query}
-      head={["Common name", "Domains", "Issuer", "Expires", "Status"]}
+      head={["Common name", "SANs", "Issuer", "Key", "Expires", "Status"]}
       rows={data.certificates.map((ct) => ({
-        search: `${ct.commonName} ${ct.domains.join(" ")} ${ct.sans.join(" ")} ${ct.issuer}`,
+        search: `${ct.commonName} ${ct.sans.join(" ")} ${ct.issuer} ${ct.serialNumber}`,
         cells: [
-          <span key="n" className="nm">
-            {ct.commonName}
-            {ct.selfSigned && (
-              <span className="ml-2 text-[11px] font-normal text-[var(--meta)]">
-                self-signed
-              </span>
-            )}
-          </span>,
-          <span key="d" className="mono text-[12px]">{ct.domains.join(", ")}</span>,
+          <span key="n" className="nm">{ct.commonName}</span>,
+          <span key="d" className="mono text-[12px]">{ct.sans.join(", ") || "—"}</span>,
           <span key="i">{ct.issuer}</span>,
+          <span key="k" className="mono text-[12px]">
+            {ct.keyType}{ct.keySize ? ` ${ct.keySize}` : ""}
+          </span>,
           <span key="e" className="mono text-[12px]">
             {new Date(ct.notAfter).toLocaleDateString()}
           </span>,
-          <ExpiryPill key="x" days={ct.daysRemaining} />,
+          <ExpiryPill key="x" status={ct.status} days={ct.daysRemaining} />,
         ],
       }))}
-      empty={
-        data.target
-          ? `No TLS-enabled routers served a certificate from ${data.target}.`
-          : "No TLS certificates found."
-      }
+      empty="Traefik's certificate store is empty."
     />
   );
 }
 
-function ExpiryPill({ days }: { days: number }) {
-  const tone = days < 14 ? "danger" : days < 30 ? "warn" : "ok";
+function ExpiryPill({ status, days }: { status: string; days: number }) {
+  const tone =
+    status === "expired" || days < 0
+      ? "danger"
+      : status === "warning" || days < 30
+        ? "warn"
+        : "ok";
   const label =
     days < 0
       ? `expired ${Math.abs(days)}d ago`

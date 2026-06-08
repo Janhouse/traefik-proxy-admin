@@ -1,6 +1,5 @@
 import "server-only";
 import net from "node:net";
-import tls from "node:tls";
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Traefik API client.
@@ -143,6 +142,28 @@ export interface TraefikVersion {
   startDate?: string;
 }
 
+/** /api/certificates entry (Traefik v3.7+). */
+export interface TraefikCertificate {
+  name: string; // SHA-256 fingerprint — also the {certificateID} path param
+  sans: string[];
+  notAfter: string;
+  notBefore: string;
+  serialNumber: string;
+  commonName: string;
+  issuerOrg?: string;
+  issuerCN?: string;
+  issuerCountry?: string;
+  organization?: string;
+  country?: string;
+  version: string;
+  keyType: string;
+  keySize?: number;
+  signatureAlgorithm: string;
+  certFingerprint: string;
+  publicKeyFingerprint: string;
+  status: string; // "enabled" | "warning" | "expired"
+}
+
 /* ── Endpoint wrappers ────────────────────────────────────────────────────── */
 
 export const getEntrypoints = () =>
@@ -224,63 +245,45 @@ export function probeTcp(
 }
 
 /**
- * Where to TLS-probe for served certificates. Traefik's API does not expose
- * certificates, so we open a TLS connection (SNI per domain) and read the leaf
- * cert. Defaults to the TRAEFIK_API_URL host on :443; override with
- * TRAEFIK_HTTPS_URL (e.g. https://edge.example.com:443).
+ * List Traefik's TLS-store certificates via /api/certificates (Traefik v3.7+),
+ * paging through results with the X-Next-Page header. Throws a TraefikApiError
+ * with status 404 on older Traefik that lacks the route.
  */
-export function getTraefikHttpsTarget(): { host: string; port: number } | null {
-  const raw = process.env.TRAEFIK_HTTPS_URL?.trim();
-  if (raw) {
-    try {
-      const u = new URL(raw);
-      return { host: u.hostname, port: u.port ? Number(u.port) : 443 };
-    } catch {
-      return null;
-    }
-  }
-  const api = getTraefikApiUrl();
-  if (!api) return null;
-  try {
-    return { host: new URL(api).hostname, port: 443 };
-  } catch {
-    return null;
-  }
-}
+export async function getCertificates(): Promise<TraefikCertificate[]> {
+  const base = getTraefikApiUrl();
+  if (!base) throw new TraefikApiError("TRAEFIK_API_URL is not configured");
 
-/** Open a TLS connection with the given SNI and return the served leaf cert. */
-export function probeCertificate(
-  host: string,
-  port: number,
-  servername: string,
-  timeoutMs = 4000
-): Promise<tls.PeerCertificate | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (cert: tls.PeerCertificate | null) => {
-      if (settled) return;
-      settled = true;
-      try {
-        socket.destroy();
-      } catch {
-        /* ignore */
-      }
-      resolve(cert);
-    };
-    const socket = tls.connect(
-      {
-        host,
-        port,
-        servername,
-        rejectUnauthorized: false,
-        ALPNProtocols: ["http/1.1"],
-      },
-      () => {
-        const cert = socket.getPeerCertificate(true);
-        finish(cert && Object.keys(cert).length ? cert : null);
-      }
-    );
-    socket.setTimeout(timeoutMs, () => finish(null));
-    socket.once("error", () => finish(null));
-  });
+  const all: TraefikCertificate[] = [];
+  let page = 1;
+  for (let guard = 0; guard < 100; guard++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(`${base}/api/certificates?page=${page}&per_page=100`, {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new TraefikApiError(
+        `Failed to reach Traefik API /api/certificates: ${reason}`
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      throw new TraefikApiError(
+        `Traefik API /api/certificates responded ${res.status}`,
+        res.status
+      );
+    }
+    const items = (await res.json()) as TraefikCertificate[];
+    all.push(...items);
+    const next = Number(res.headers.get("X-Next-Page") || "0");
+    if (!Number.isFinite(next) || next <= page) break;
+    page = next;
+  }
+  return all;
 }
