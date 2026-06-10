@@ -22,7 +22,15 @@
 
 # misc
 .DS_Store
+
+# keys & certificates (Traefik writes ACME keys/certs into mounted dirs at
+# runtime — they are auto-generated and must never be committed)
 *.pem
+*.key
+*.crt
+*.p12
+acme.json
+letsencrypt/
 
 # debug
 npm-debug.log*

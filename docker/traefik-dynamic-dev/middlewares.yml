@@ -1,0 +1,16 @@
+http:
+  middlewares:
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+    ratelimit:
+      rateLimit:
+        average: 100
+        burst: 50
+    compress:
+      compress: {}
+    redirect-https:
+      redirectScheme:
+        scheme: https
+        permanent: true

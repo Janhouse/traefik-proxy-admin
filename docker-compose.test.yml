@@ -1,0 +1,38 @@
+# Local manual-test stack (NOT for production).
+# Run scripts/generate-dev-certs.sh once first — the dev TLS keys/certs are
+# gitignored and generated on demand.
+# Traefik uses host networking so it can reach the host-run dev server
+# (http://localhost:3000) for the HTTP config provider, and exposes its API on
+# :8080. Postgres is bridged on 5433 (5432 is taken on this host).
+name: traefik-admin-test
+services:
+  traefik:
+    image: "traefik:v3.7.4"
+    network_mode: host
+    command:
+      - "--log.level=INFO"
+      - "--api.insecure=true"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.addRoutersLabels=true"
+      - "--metrics.prometheus.addServicesLabels=true"
+      - "--metrics.prometheus.addEntryPointsLabels=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--providers.http.endpoint=http://localhost:3000/api/traefik/config"
+      - "--providers.http.pollInterval=5s"
+      - "--certificatesresolvers.letsencrypt.acme.email=test@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/tmp/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+    volumes:
+      - "./docker/traefik-dynamic-dev:/etc/traefik/dynamic:ro"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: traefik_share
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
