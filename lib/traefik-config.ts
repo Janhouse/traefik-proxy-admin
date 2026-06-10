@@ -1,7 +1,15 @@
 import "server-only";
 import { db, services, domains } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { assembleRule, parseEntrypoints, parseMatchRules } from "@/lib/route-rule";
+import {
+  assembleRule,
+  assembleRuleFromTree,
+  hostsInTree,
+  parseEntrypoints,
+  parseMatchRules,
+  treeHasHost,
+  type DomainResolver,
+} from "@/lib/route-rule";
 import {
   isTlsEntrypoint,
   resolveEntrypointTlsInfo,
@@ -386,7 +394,8 @@ async function createTraefikService(
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig,
   epTlsInfo: Map<string, EntrypointTlsInfo>,
-  usedIdentifiers: Set<string>
+  usedIdentifiers: Set<string>,
+  resolveDomain: DomainResolver
 ): Promise<boolean> {
   let serviceIdentifier = generateServiceIdentifier(service, domain);
   // Identifier collision (e.g. two services resolving to the same slug) —
@@ -399,8 +408,19 @@ async function createTraefikService(
   const serviceName = `service-${serviceIdentifier}`;
   const protocol = service.isHttps ? "https" : "http";
 
+  // Parse the stored rule tree once. A tree carrying its own Host rules is
+  // SELF-CONTAINED (the editor's native format): both the rule string and the
+  // hostname list come from the tree. A tree WITHOUT any Host rule is a legacy
+  // service whose host still lives in the subdomain/domain columns. Either
+  // way, the identifier/router names/TLS-mode logic stays driven by the
+  // (derived) legacy columns.
+  const matchRules = parseMatchRules(service.matchRules);
+  const selfContainedTree = treeHasHost(matchRules);
+
   // Get hostnames for this service
-  const hostnames = generateServiceHostnames(service, domain);
+  const hostnames = selfContainedTree
+    ? hostsInTree(matchRules, resolveDomain)
+    : generateServiceHostnames(service, domain);
   if (hostnames.length === 0) {
     console.warn(`Service ${service.id} has no valid hostnames, skipping`);
     return false;
@@ -439,12 +459,14 @@ async function createTraefikService(
   // emitted router — guarantees identical middlewares across all entrypoints.
   const middlewares = await buildServiceMiddlewares(service, serviceIdentifier, globalConfig, config);
 
-  // Build the router rule. Legacy `custom` services (no structured matchers)
-  // keep the Host(a) || Host(b) form; everything else assembles the primary
-  // Host + structured matchers via the shared assembler (same as the UI preview).
-  const matchRules = parseMatchRules(service.matchRules);
-  const rule =
-    service.hostnameMode === "custom" && matchRules.length === 0
+  // Build the router rule. Self-contained trees assemble entirely from the
+  // tree (resolver-aware) — the legacy columns' host is NOT injected. Legacy
+  // `custom` services (no structured matchers) keep the Host(a) || Host(b)
+  // form; everything else assembles the primary Host + structured matchers
+  // via the shared assembler (same as the UI preview).
+  const rule = selfContainedTree
+    ? assembleRuleFromTree(matchRules, resolveDomain)
+    : service.hostnameMode === "custom" && matchRules.length === 0
       ? hostnames.map((hostname) => `Host(\`${hostname}\`)`).join(" || ")
       : assembleRule(hostnames[0], matchRules);
 
@@ -731,6 +753,18 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
   // Get all domains to ensure wildcard certificates are created even when no services are enabled
   const allDomains = await db.select().from(domains);
 
+  // Resolver for domain-backed Host rules inside self-contained matchRule
+  // trees: every known domain (all domains + the services' joined domains).
+  const domainNameById = new Map<string, string>();
+  for (const d of allDomains) {
+    domainNameById.set(d.id, d.domain);
+  }
+  for (const { domain } of enabledServices) {
+    if (domain) domainNameById.set(domain.id, domain.domain);
+  }
+  const resolveDomain: DomainResolver = (domainId) =>
+    domainNameById.get(domainId) ?? null;
+
   const globalConfig = await getGlobalConfig();
 
   // Per-entrypoint TLS info (cached ~30s) — resolved once per generation.
@@ -768,7 +802,8 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
       globalConfig,
       config,
       epTlsInfo,
-      usedIdentifiers
+      usedIdentifiers,
+      resolveDomain
     );
     if (requestedWildcard) {
       wildcardSatisfiedDomains.add(domain.id);

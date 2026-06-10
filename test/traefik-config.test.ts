@@ -513,6 +513,156 @@ describe("generateTraefikConfig — match rules", () => {
   });
 });
 
+describe("generateTraefikConfig — self-contained Host trees", () => {
+  it("assembles the rule from the tree alone — the legacy columns' host is not duplicated", async () => {
+    const domain = mkDomain();
+    const matchRules = JSON.stringify([
+      { type: "Host", conn: "AND", domainId: "domain-1", sub: "tree" },
+      { type: "PathPrefix", conn: "AND", value: "/api" },
+    ]);
+    // legacy columns deliberately disagree with the tree: they still drive the
+    // identifier (router-app-example-com) but must NOT leak into the rule
+    h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["router-app-example-com"];
+    expect(router).toBeDefined();
+    expect(router.rule).toBe("(Host(`tree.example.com`) && PathPrefix(`/api`))");
+    expect(router.rule).not.toContain("app.example.com");
+  });
+
+  it("supports per-group hosts — (Host a && /x) || (Host b && /y)", async () => {
+    const domain = mkDomain();
+    const matchRules = JSON.stringify([
+      {
+        kind: "group",
+        conn: "AND",
+        children: [
+          { type: "Host", conn: "AND", domainId: "domain-1", sub: "a" },
+          { type: "PathPrefix", conn: "AND", value: "/x" },
+        ],
+      },
+      {
+        kind: "group",
+        conn: "OR",
+        children: [
+          { type: "Host", conn: "AND", value: "b.example.org" },
+          { type: "PathPrefix", conn: "AND", value: "/y" },
+        ],
+      },
+    ]);
+    h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["router-app-example-com"].rule).toBe(
+      "((Host(`a.example.com`) && PathPrefix(`/x`)) || (Host(`b.example.org`) && PathPrefix(`/y`)))"
+    );
+  });
+
+  it("resolves free-text hosts; an unknown domainId contributes no hostname (TLS driven by resolved hosts only)", async () => {
+    // wildcard off + a cert config covering the free-text host: the tree's
+    // RESOLVED hostnames must drive cert selection, the unresolved Host must not
+    const domain = mkDomain({
+      useWildcardCert: false,
+      certificateConfigs: JSON.stringify([
+        { name: "ext", main: "ext.example.org", certResolver: "le" },
+      ]),
+    });
+    const matchRules = JSON.stringify([
+      { type: "Host", conn: "AND", value: "ext.example.org" },
+      { type: "Host", conn: "OR", domainId: "missing-domain", sub: "x" },
+    ]);
+    const service = mkService({
+      matchRules,
+      // derived columns for a free-text first Host: custom + resolved tree hosts
+      hostnameMode: "custom",
+      customHostnames: '["ext.example.org"]',
+      entrypoints: '["websecure"]',
+    });
+    h.state.joinRows = [{ service, domain }];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["router-ext-example-org"];
+    expect(router).toBeDefined();
+    // the unresolved Host stays in the rule as a never-matching Host(``)
+    expect(router.rule).toBe("(Host(`ext.example.org`) || Host(``))");
+    expect(router.tls).toEqual({
+      certResolver: "le",
+      domains: [{ main: "ext.example.org", sans: undefined }],
+    });
+  });
+
+  it("skips a service whose only Host references an unknown domain", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const domain = mkDomain();
+      const matchRules = JSON.stringify([
+        { type: "Host", conn: "AND", domainId: "missing-domain", sub: "x" },
+        { type: "PathPrefix", conn: "AND", value: "/api" },
+      ]);
+      h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
+
+      const config = await generateTraefikConfig();
+      expect(
+        Object.keys(config.http.routers).filter((n) => n.startsWith("router-"))
+      ).toEqual([]);
+      expect(
+        Object.keys(config.http.services).filter((n) => n.startsWith("service-"))
+      ).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("has no valid hostnames")
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("still emits per-entrypoint split routers with identical middlewares and per-EP TLS", async () => {
+    const domain = mkDomain();
+    const matchRules = JSON.stringify([
+      { type: "Host", conn: "AND", domainId: "domain-1", sub: "app" },
+      { type: "PathPrefix", conn: "AND", value: "/api" },
+    ]);
+    const service = mkService({ matchRules, entrypoints: '["web","websecure"]' });
+    h.state.joinRows = [{ service, domain }];
+    h.state.globalConfig.globalMiddlewares = ["compress"];
+
+    const config = await generateTraefikConfig();
+    const web = config.http.routers["router-app-example-com-web"];
+    const secure = config.http.routers["router-app-example-com-websecure"];
+    expect(web).toBeDefined();
+    expect(secure).toBeDefined();
+    expect(web.rule).toBe("(Host(`app.example.com`) && PathPrefix(`/api`))");
+    expect(secure.rule).toBe(web.rule);
+    expect(web.middlewares).toBe(secure.middlewares); // same array instance
+    expect(web.middlewares).toEqual(["compress"]);
+    expect(web.tls).toBeUndefined();
+    expect(secure.tls).toEqual({
+      certResolver: "letsencrypt",
+      domains: [{ main: "example.com", sans: ["*.example.com"] }],
+    });
+  });
+
+  it("a tree service in derived subdomain mode requests the wildcard cert and suppresses the trigger", async () => {
+    const domain = mkDomain();
+    const matchRules = JSON.stringify([
+      { type: "Host", conn: "AND", domainId: "domain-1", sub: "app" },
+    ]);
+    h.state.joinRows = [
+      { service: mkService({ matchRules, entrypoints: '["websecure"]' }), domain },
+    ];
+    h.state.allDomains = [domain];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["router-app-example-com"];
+    expect(router.tls).toEqual({
+      certResolver: "letsencrypt",
+      domains: [{ main: "example.com", sans: ["*.example.com"] }],
+    });
+    expect(config.http.routers["wildcard-cert-router-example-com"]).toBeUndefined();
+  });
+});
+
 describe("generateTraefikConfig — cert triggers", () => {
   it("path-scopes the wildcard trigger rule (parenthesized host)", async () => {
     h.state.allDomains = [mkDomain()];
