@@ -1,4 +1,4 @@
-import type { MatchRule } from "@/lib/route-rule";
+import type { RuleNode } from "@/lib/route-rule";
 
 // Hostname mode types
 export type HostnameMode = 'subdomain' | 'apex' | 'custom';
@@ -14,7 +14,7 @@ export interface CreateServiceRequest {
   targetPort: number;
   entrypoint?: string;
   entrypoints?: string[];
-  matchRules?: MatchRule[];
+  matchRules?: RuleNode[];
   isHttps?: boolean;
   insecureSkipVerify?: boolean;
   enabled?: boolean;
@@ -33,7 +33,7 @@ export interface UpdateServiceRequest {
   targetPort: number;
   entrypoint?: string;
   entrypoints?: string[];
-  matchRules?: MatchRule[];
+  matchRules?: RuleNode[];
   isHttps?: boolean;
   insecureSkipVerify?: boolean;
   enabled?: boolean;
