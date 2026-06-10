@@ -9,6 +9,7 @@ import {
 import {
   countMatchers,
   getNode,
+  isGroup,
   type MatchRule,
   type RuleGroup,
   type RuleNode,
@@ -86,19 +87,37 @@ describe("applyDrop", () => {
     expect((next[1] as RuleGroup).children).toHaveLength(1);
   });
 
-  it("clamps a group dropped into another container to the top level", () => {
+  it("allows nesting a plain group one level deep (UI max depth 2)", () => {
     const twoGroups: RuleNode[] = [g(m("/x")), g(m("/y")), m("/z")];
     const next = applyDrop(twoGroups, [0], { kind: "item", path: [1, 0] });
-    // the group must NOT nest inside the other group
-    expect(next.filter((n) => (n as RuleGroup).kind === "group")).toHaveLength(2);
+    // [0] moved INTO the remaining top-level group (now at index 0)
+    expect(next).toHaveLength(2);
+    const outer = next[0] as RuleGroup;
+    expect(outer.kind).toBe("group");
+    expect((outer.children[0] as RuleGroup).kind).toBe("group");
     expect(countMatchers(next)).toBe(3);
-    for (const n of next) {
-      if ((n as RuleGroup).kind === "group") {
-        for (const c of (n as RuleGroup).children) {
-          expect((c as RuleGroup).kind).toBeUndefined();
-        }
-      }
-    }
+  });
+
+  it("clamps a group that already contains a group — depth would exceed 2", () => {
+    const nested: RuleNode[] = [g(g(m("/deep"))), g(m("/y")), m("/z")];
+    const next = applyDrop(nested, [0], { kind: "item", path: [1, 0] });
+    // the group-with-a-group stays at the top level (clamped)
+    expect(next.filter((n) => isGroup(n))).toHaveLength(2);
+    const target = next.find(
+      (n) => isGroup(n) && n.children.some((c) => !isGroup(c))
+    ) as RuleGroup;
+    expect(target.children.filter((c) => isGroup(c))).toHaveLength(0);
+    expect(countMatchers(next)).toBe(3);
+  });
+
+  it("drops a matcher into a depth-2 nested group container", () => {
+    const nested: RuleNode[] = [g(g(m("/deep"))), m("/z")];
+    const next = applyDrop(nested, [1], { kind: "container", path: [0, 0] });
+    const inner = (next[0] as RuleGroup).children[0] as RuleGroup;
+    expect(inner.children.map((c) => (c as MatchRule).value)).toEqual([
+      "/deep",
+      "/z",
+    ]);
   });
 
   it("ignores drops from a stale path", () => {

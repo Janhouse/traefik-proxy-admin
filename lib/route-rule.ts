@@ -23,7 +23,17 @@ export interface MatchRule {
   value?: string; // single-value types (Host, PathPrefix, …) + the value of key/value types
   key?: string; // Header/HeaderRegexp/Query key
   method?: string; // Method
+  /* Host-only "domain-backed" composition: when domainId is set the hostname
+   * is composed from a managed domain (sub.domain or the apex) and `value` is
+   * ignored. Free-text hosts keep using `value`. */
+  domainId?: string;
+  sub?: string;
+  apex?: boolean;
 }
+
+/** Resolves a managed domain id to its domain name (client: from the loaded
+ * domains list; server: from the DB). Return null/undefined when unknown. */
+export type DomainResolver = (domainId: string) => string | null | undefined;
 
 /** A parenthesized sub-expression: its children combine left-to-right, and the
  * whole group joins the preceding token with `conn`. */
@@ -45,6 +55,9 @@ export function isGroup(node: RuleNode): node is RuleGroup {
 /** Groups may nest in the stored model; the parser refuses anything deeper. */
 export const MAX_GROUP_DEPTH = 4;
 
+/** How deep the EDITOR lets users nest groups (groups inside groups = 2). */
+export const UI_MAX_GROUP_DEPTH = 2;
+
 export interface MatcherTypeDef {
   key: MatchType;
   label: string;
@@ -64,7 +77,7 @@ export const METHODS = [
 ];
 
 export const MATCHER_TYPES: MatcherTypeDef[] = [
-  { key: "Host", label: "Host", desc: "An additional hostname (OR with the primary host)", fields: ["value"], ph: ["app.example.com"] },
+  { key: "Host", label: "Host", desc: "A public hostname for this route", fields: ["value"], ph: ["app.example.com"] },
   { key: "PathPrefix", label: "Path prefix", desc: "URLs starting with a path segment", fields: ["value"], ph: ["/api"] },
   { key: "Path", label: "Exact path", desc: "One exact path, nothing else", fields: ["value"], ph: ["/healthz"] },
   { key: "PathRegexp", label: "Path regexp", desc: "Match the path by regular expression", fields: ["value"], ph: ["^/v[0-9]+/"] },
@@ -99,26 +112,43 @@ function clean(v: string): string {
   return String(v ?? "").replace(/`/g, "");
 }
 
-function matcherArgs(m: MatchRule): string[] {
+/** The hostname a Host rule resolves to: domain-backed (sub.domain / apex) or
+ * the free-text value. Empty string when unresolvable/unfilled. */
+export function resolveHostValue(
+  m: MatchRule,
+  resolveDomain?: DomainResolver
+): string {
+  if (m.type === "Host" && m.domainId) {
+    const domain = resolveDomain?.(m.domainId);
+    if (!domain) return "";
+    if (m.apex) return domain;
+    const s = (m.sub || "").trim();
+    return s ? `${s}.${domain}` : "";
+  }
+  return clean(m.value || "");
+}
+
+function matcherArgs(m: MatchRule, resolveDomain?: DomainResolver): string[] {
   if (m.type === "Method") return [m.method || "GET"];
+  if (m.type === "Host") return [resolveHostValue(m, resolveDomain)];
   const def = matcherDef(m.type);
   if (def.fields.includes("key")) return [m.key || "", m.value || ""];
   return [m.value || ""];
 }
 
-function matcherString(m: MatchRule): string {
-  const inner = matcherArgs(m)
+function matcherString(m: MatchRule, resolveDomain?: DomainResolver): string {
+  const inner = matcherArgs(m, resolveDomain)
     .map((a) => "`" + clean(a) + "`")
     .join(", ");
   return `${m.type}(${inner})`;
 }
 
 /** Expression for one node; null when the node contributes nothing (empty group). */
-function nodeExpr(node: RuleNode): string | null {
-  if (!isGroup(node)) return matcherString(node);
+function nodeExpr(node: RuleNode, resolveDomain?: DomainResolver): string | null {
+  if (!isGroup(node)) return matcherString(node, resolveDomain);
   let expr: string | null = null;
   for (const child of node.children) {
-    const e = nodeExpr(child);
+    const e = nodeExpr(child, resolveDomain);
     if (e === null) continue;
     if (expr === null) {
       expr = e; // first child's connector is meaningless inside its group
@@ -131,24 +161,79 @@ function nodeExpr(node: RuleNode): string | null {
 }
 
 /**
- * Assemble the Traefik router rule. Left-associative with explicit parens so it
- * reads exactly as composed (operators apply in the order shown), e.g.
+ * Assemble the Traefik router rule from a primary host plus extra rules.
+ * Left-associative with explicit parens so it reads exactly as composed
+ * (operators apply in the order shown), e.g.
  *   Host(a) || Host(b) && PathPrefix(/api)  →  ((Host(`a`) || Host(`b`)) && PathPrefix(`/api`))
  * Groups become their own parenthesized sub-expression. This is unambiguous
  * regardless of Traefik's &&-over-|| precedence.
+ *
+ * Legacy form: services whose host still lives in the subdomain/domain columns.
+ * Trees that carry their own Host rules use assembleRuleFromTree instead.
  */
 export function assembleRule(
   primaryHost: string,
-  matchRules: RuleNode[]
+  matchRules: RuleNode[],
+  resolveDomain?: DomainResolver
 ): string {
   let rule = `Host(\`${clean(primaryHost)}\`)`;
   for (const node of matchRules) {
-    const e = nodeExpr(node);
+    const e = nodeExpr(node, resolveDomain);
     if (e === null) continue;
     const op = node.conn === "OR" ? "||" : "&&";
     rule = `(${rule} ${op} ${e})`;
   }
   return rule;
+}
+
+/**
+ * Assemble a SELF-CONTAINED rule tree (one that carries its own Host rules —
+ * the editor's native format). The first contributing node's connector is
+ * meaningless, exactly like the first child of a group. Returns "" for an
+ * empty/non-contributing tree — callers must treat that as invalid.
+ */
+export function assembleRuleFromTree(
+  matchRules: RuleNode[],
+  resolveDomain?: DomainResolver
+): string {
+  return nodeExpr({ kind: "group", conn: "AND", children: matchRules }, resolveDomain) ?? "";
+}
+
+/** Depth-first hostnames of every Host rule in the tree (resolved, non-empty). */
+export function hostsInTree(
+  nodes: RuleNode[],
+  resolveDomain?: DomainResolver
+): string[] {
+  const out: string[] = [];
+  const walk = (list: RuleNode[]) => {
+    for (const n of list) {
+      if (isGroup(n)) walk(n.children);
+      else if (n.type === "Host") {
+        const host = resolveHostValue(n, resolveDomain);
+        if (host) out.push(host);
+      }
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+/** First Host rule in the tree (depth-first), or null. */
+export function firstHostNode(nodes: RuleNode[]): MatchRule | null {
+  for (const n of nodes) {
+    if (isGroup(n)) {
+      const hit = firstHostNode(n.children);
+      if (hit) return hit;
+    } else if (n.type === "Host") {
+      return n;
+    }
+  }
+  return null;
+}
+
+/** Whether the tree carries any Host rule (self-contained rule format). */
+export function treeHasHost(nodes: RuleNode[]): boolean {
+  return firstHostNode(nodes) !== null;
 }
 
 /* ── Tokenizer for the syntax-highlighted preview ─────────────────────────── */
@@ -216,6 +301,9 @@ function parseNode(raw: unknown, depth: number): RuleNode | null {
     value: typeof o.value === "string" ? o.value : undefined,
     key: typeof o.key === "string" ? o.key : undefined,
     method: typeof o.method === "string" ? o.method : undefined,
+    domainId: typeof o.domainId === "string" ? o.domainId : undefined,
+    sub: typeof o.sub === "string" ? o.sub : undefined,
+    apex: typeof o.apex === "boolean" ? o.apex : undefined,
   };
 }
 

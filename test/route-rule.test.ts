@@ -1,18 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
   assembleRule,
+  assembleRuleFromTree,
   countMatchers,
+  firstHostNode,
   getNode,
   hostToken,
   hostTokensOfRule,
+  hostsInTree,
   insertNode,
   isGroup,
   moveNode,
   parseEntrypoints,
   parseMatchRules,
   removeNode,
+  resolveHostValue,
+  treeHasHost,
   ungroupNode,
   updateNode,
+  type DomainResolver,
   type MatchRule,
   type RuleGroup,
   type RuleNode,
@@ -104,6 +110,66 @@ describe("assembleRule", () => {
     expect(rule).toBe(
       "(Host(`a.com`) && (PathPrefix(`/api`) || (Method(`GET`) || Method(`HEAD`))))"
     );
+  });
+});
+
+describe("domain-backed hosts + self-contained trees", () => {
+  const domains: DomainResolver = (id) =>
+    ({ d1: "example.com", d2: "other.net" })[id];
+  const hostD = (
+    conn: MatchRule["conn"],
+    over: Partial<MatchRule> = {}
+  ): MatchRule => ({ type: "Host", conn, ...over });
+
+  it("resolveHostValue composes sub.domain, apex, and free text", () => {
+    expect(resolveHostValue(hostD("AND", { domainId: "d1", sub: "app" }), domains)).toBe("app.example.com");
+    expect(resolveHostValue(hostD("AND", { domainId: "d1", apex: true }), domains)).toBe("example.com");
+    expect(resolveHostValue(hostD("AND", { domainId: "d1", sub: "" }), domains)).toBe("");
+    expect(resolveHostValue(hostD("AND", { domainId: "missing", sub: "app" }), domains)).toBe("");
+    expect(resolveHostValue(hostD("AND", { value: "free.example.org" }), domains)).toBe("free.example.org");
+  });
+
+  it("assembleRuleFromTree builds a complete rule from the tree alone", () => {
+    const tree: RuleNode[] = [
+      hostD("AND", { domainId: "d1", sub: "app" }),
+      m("PathPrefix", "AND", "/api"),
+    ];
+    expect(assembleRuleFromTree(tree, domains)).toBe(
+      "(Host(`app.example.com`) && PathPrefix(`/api`))"
+    );
+    // first node's connector is meaningless
+    expect(assembleRuleFromTree([hostD("OR", { domainId: "d1", apex: true })], domains)).toBe(
+      "Host(`example.com`)"
+    );
+    expect(assembleRuleFromTree([], domains)).toBe("");
+  });
+
+  it("supports per-group hosts — (Host(a) && /x) || (Host(b) && /y)", () => {
+    const tree: RuleNode[] = [
+      g("AND", hostD("AND", { domainId: "d1", sub: "a" }), m("PathPrefix", "AND", "/x")),
+      g("OR", hostD("AND", { domainId: "d2", apex: true }), m("PathPrefix", "AND", "/y")),
+    ];
+    expect(assembleRuleFromTree(tree, domains)).toBe(
+      "((Host(`a.example.com`) && PathPrefix(`/x`)) || (Host(`other.net`) && PathPrefix(`/y`)))"
+    );
+  });
+
+  it("hostsInTree/firstHostNode/treeHasHost walk depth-first and skip unresolved", () => {
+    const tree: RuleNode[] = [
+      g("AND", hostD("AND", { domainId: "d1", sub: "a" }), m("PathPrefix", "AND", "/x")),
+      hostD("OR", { value: "b.example.org" }),
+      hostD("OR", { domainId: "missing", sub: "x" }),
+    ];
+    expect(hostsInTree(tree, domains)).toEqual(["a.example.com", "b.example.org"]);
+    expect(firstHostNode(tree)).toMatchObject({ domainId: "d1", sub: "a" });
+    expect(treeHasHost(tree)).toBe(true);
+    expect(treeHasHost([m("PathPrefix", "AND", "/x")])).toBe(false);
+    expect(firstHostNode([])).toBeNull();
+  });
+
+  it("round-trips domain-backed fields through parseMatchRules", () => {
+    const tree: RuleNode[] = [hostD("AND", { domainId: "d1", sub: "app", apex: false })];
+    expect(parseMatchRules(JSON.stringify(tree))).toEqual(tree);
   });
 });
 

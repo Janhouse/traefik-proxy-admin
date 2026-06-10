@@ -7,6 +7,7 @@ import {
   getNode,
   isGroup,
   moveNode,
+  UI_MAX_GROUP_DEPTH,
   type NodePath,
   type RuleNode,
 } from "@/lib/route-rule";
@@ -43,11 +44,22 @@ export function containerChildren(
   return g && isGroup(g) ? g.children : null;
 }
 
+/** 1 + the deepest group nesting inside this group (1 = no nested groups). */
+function groupInnerDepth(group: RuleNode): number {
+  if (!isGroup(group)) return 0;
+  let deepest = 0;
+  for (const child of group.children) {
+    deepest = Math.max(deepest, groupInnerDepth(child));
+  }
+  return 1 + deepest;
+}
+
 /**
  * Resolve a finished drag into the tree after the move, or the original tree
  * to ignore. Semantics: same-container = arrayMove (land at the hovered slot),
- * cross-container = insert before the hovered node, container body = append,
- * groups clamped to the top level.
+ * cross-container = insert before the hovered node, container body = append.
+ * Groups may nest up to UI_MAX_GROUP_DEPTH levels — drops that would nest
+ * deeper are clamped up to the deepest container that fits.
  */
 export function applyDrop(
   cur: RuleNode[],
@@ -79,7 +91,13 @@ export function applyDrop(
     }
   }
   if (!to) return cur;
-  // groups stay top-level — never drop a group inside another group
-  if (isGroup(moving) && to.length > 1) to = [to[0]];
+  // Clamp group drops so total nesting stays within UI_MAX_GROUP_DEPTH: the
+  // target container depth (path length - 1) plus the group's own inner depth.
+  if (isGroup(moving)) {
+    const maxContainerDepth = UI_MAX_GROUP_DEPTH - groupInnerDepth(moving);
+    if (to.length - 1 > maxContainerDepth) {
+      to = to.slice(0, Math.max(1, maxContainerDepth + 1));
+    }
+  }
   return moveNode(cur, from, to);
 }
