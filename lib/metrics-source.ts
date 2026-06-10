@@ -3,7 +3,7 @@ import { db, services, domains, routerMetricSamples } from "@/lib/db";
 import type { NewRouterMetricSample } from "@/lib/db/schema";
 import { eq, gte, lt } from "drizzle-orm";
 import { getTraefikApiUrl } from "@/lib/traefik-api";
-import { generateServiceIdentifier } from "@/lib/traefik-config";
+import { serviceRouterNames } from "@/lib/traefik-config";
 import { fetchMetricsText, parseProm, stripProvider } from "@/lib/prometheus";
 import type { MetricsResponse, TrafficMetrics } from "@/lib/traefik-client-types";
 
@@ -59,7 +59,9 @@ const prevDur = new Map<string, { sum: number; count: number }>(); // router -> 
 let lastScrapeOk = false;
 let lastRouterLinesSeen = 0;
 
-/** Map `router-<identifier>` -> admin service id (all services, all hostname modes). */
+/** Map router name -> admin service id (all services, all hostname modes).
+ * Includes the per-entrypoint split routers (`router-<identifier>-<ep>`) so
+ * traffic on every entrypoint maps back to the owning service. */
 async function buildRouterServiceMap(): Promise<Map<string, string>> {
   const rows = await db
     .select({ service: services, domain: domains })
@@ -68,7 +70,9 @@ async function buildRouterServiceMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const { service, domain } of rows) {
     if (!domain) continue;
-    map.set(`router-${generateServiceIdentifier(service, domain)}`, service.id);
+    for (const name of serviceRouterNames(service, domain)) {
+      map.set(name, service.id);
+    }
   }
   return map;
 }
@@ -254,17 +258,25 @@ export async function getMetricsSnapshot(): Promise<MetricsResponse> {
   for (const [serviceId, samples] of byService) {
     const bucketReqs = new Array(BARS).fill(0);
     const bucketSecs = new Array(BARS).fill(0);
+    // A service split across multiple routers (per-entrypoint) yields several
+    // rows per scrape tick; requests are SUMMED, but the tick's wall-clock
+    // seconds must only count once per distinct scrape timestamp.
+    const seenTicks = new Set<number>();
     let c2 = 0, c3 = 0, c4 = 0, c5 = 0, co = 0, durSum = 0, durCount = 0;
 
     for (const s of samples) {
       const total = s.req2xx + s.req3xx + s.req4xx + s.req5xx + s.reqOther;
       c2 += s.req2xx; c3 += s.req3xx; c4 += s.req4xx; c5 += s.req5xx; co += s.reqOther;
       durSum += s.durSumMs; durCount += s.durCount;
-      let idx = Math.floor((new Date(s.ts).getTime() - startMs) / bucketMs);
+      const tsMs = new Date(s.ts).getTime();
+      let idx = Math.floor((tsMs - startMs) / bucketMs);
       if (idx < 0) idx = 0;
       if (idx >= BARS) idx = BARS - 1;
       bucketReqs[idx] += total;
-      bucketSecs[idx] += interval;
+      if (!seenTicks.has(tsMs)) {
+        seenTicks.add(tsMs);
+        bucketSecs[idx] += interval;
+      }
     }
 
     const bars = bucketReqs.map((reqs, i) =>

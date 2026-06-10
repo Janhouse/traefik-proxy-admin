@@ -66,6 +66,9 @@ async function traefikFetch<T>(path: string): Promise<T> {
 export interface TraefikEntryPoint {
   name: string;
   address: string;
+  /** Static-config `entryPoints.<name>.http.tls` — when set, every router on
+   * this entrypoint is TLS by default (used for per-entrypoint TLS detection). */
+  http?: { tls?: Record<string, unknown> | null };
 }
 
 export interface TraefikHttpRouter {

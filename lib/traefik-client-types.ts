@@ -142,6 +142,7 @@ export interface RouteConflictRouter {
   entryPoints: string[];
   provider: string;
   managedServiceId: string | null; // our service id if this router is ours
+  internal?: boolean; // true for this tool's own cert-trigger routers
 }
 
 export interface RouteConflictsResponse {
