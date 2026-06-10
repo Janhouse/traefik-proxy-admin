@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ServiceService } from "@/lib/services/service.service";
 import { DomainService } from "@/lib/services/domain.service";
 import type { CreateServiceData, CreateServiceRequest } from "@/lib/dto/service.dto";
+import { mapServiceRequestBody } from "@/lib/service-request-mapping";
 import "@/lib/startup"; // Initialize background services
 
 export async function GET() {
@@ -44,24 +45,8 @@ export async function POST(request: NextRequest) {
     }
 
     const newService: CreateServiceData = {
-      name: body.name,
-      subdomain: body.subdomain || null,
-      hostnameMode: body.hostnameMode,
-      customHostnames: body.customHostnames ? JSON.stringify(body.customHostnames) : null,
+      ...mapServiceRequestBody(body),
       domainId: domainId,
-      targetIp: body.targetIp,
-      targetPort: body.targetPort,
-      entrypoint: body.entrypoint || null,
-      entrypoints: body.entrypoints ? JSON.stringify(body.entrypoints) : null,
-      matchRules: body.matchRules ? JSON.stringify(body.matchRules) : null,
-      isHttps: body.isHttps ?? false,
-      insecureSkipVerify: body.insecureSkipVerify ?? false,
-      enabled: body.enabled ?? true,
-      enableDurationMinutes: body.enableDurationMinutes ?? null,
-      middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
-      requestHeaders: body.requestHeaders
-        ? (typeof body.requestHeaders === 'string' ? body.requestHeaders : JSON.stringify(body.requestHeaders))
-        : null,
     };
 
     const service = await ServiceService.createService(newService);

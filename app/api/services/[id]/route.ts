@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ServiceService } from "@/lib/services/service.service";
 import { DomainService } from "@/lib/services/domain.service";
 import type { UpdateServiceData, UpdateServiceRequest } from "@/lib/dto/service.dto";
+import { mapServiceRequestBody } from "@/lib/service-request-mapping";
 
 export async function GET(
   request: NextRequest,
@@ -48,24 +49,8 @@ export async function PUT(
     }
 
     const updateData: UpdateServiceData = {
-      name: body.name,
-      subdomain: body.subdomain || null,
-      hostnameMode: body.hostnameMode,
-      customHostnames: body.customHostnames ? JSON.stringify(body.customHostnames) : null,
+      ...mapServiceRequestBody(body),
       domainId: body.domainId,
-      targetIp: body.targetIp,
-      targetPort: body.targetPort,
-      entrypoint: body.entrypoint || null,
-      entrypoints: body.entrypoints ? JSON.stringify(body.entrypoints) : null,
-      matchRules: body.matchRules ? JSON.stringify(body.matchRules) : null,
-      isHttps: body.isHttps ?? false,
-      insecureSkipVerify: body.insecureSkipVerify ?? false,
-      enabled: body.enabled ?? true,
-      middlewares: body.middlewares ? JSON.stringify(body.middlewares) : null,
-      requestHeaders: body.requestHeaders
-        ? (typeof body.requestHeaders === 'string' ? body.requestHeaders : JSON.stringify(body.requestHeaders))
-        : null,
-      enableDurationMinutes: body.enableDurationMinutes ?? null,
     };
 
     const service = await ServiceService.updateService(id, updateData);
