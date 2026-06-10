@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "@/components/toaster";
 
 export interface GlobalConfig {
   globalMiddlewares: string[];
@@ -15,30 +16,35 @@ const defaultConfig: GlobalConfig = {
   defaultEnableDurationMinutes: 720,
 };
 
+/** Normalize an API payload so every field is a stable controlled value. */
+function normalizeConfig(data: Partial<GlobalConfig>): GlobalConfig {
+  return {
+    globalMiddlewares: Array.isArray(data.globalMiddlewares)
+      ? data.globalMiddlewares
+      : [],
+    adminPanelDomain: data.adminPanelDomain || "localhost:3000",
+    defaultEntrypoint: data.defaultEntrypoint || "",
+    defaultEnableDurationMinutes: data.defaultEnableDurationMinutes ?? 720,
+  };
+}
+
 export function useConfig() {
   const [config, setConfig] = useState<GlobalConfig>(defaultConfig);
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig>(defaultConfig);
-  const [middlewareText, setMiddlewareText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Middlewares now live directly in `config`, so edits to them count here —
+  // previously they sat in a separate text state and never enabled Save.
   const hasUnsavedChanges = JSON.stringify(config) !== JSON.stringify(originalConfig);
 
   const fetchConfig = useCallback(async () => {
     try {
       const response = await fetch("/api/config");
       if (response.ok) {
-        const data = await response.json();
-        // Ensure all fields have values to prevent controlled/uncontrolled input issues
-        const fullConfig = {
-          globalMiddlewares: Array.isArray(data.globalMiddlewares) ? data.globalMiddlewares : [],
-          adminPanelDomain: data.adminPanelDomain || "localhost:3000",
-          defaultEntrypoint: data.defaultEntrypoint || "",
-          defaultEnableDurationMinutes: data.defaultEnableDurationMinutes ?? 720,
-        };
+        const fullConfig = normalizeConfig(await response.json());
         setConfig(fullConfig);
         setOriginalConfig(fullConfig);
-        setMiddlewareText(fullConfig.globalMiddlewares.join("\n"));
       }
     } catch (error) {
       console.error("Error fetching config:", error);
@@ -54,14 +60,11 @@ export function useConfig() {
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      const middlewares = middlewareText
-        .split("\n")
-        .map((m) => m.trim())
-        .filter((m) => m.length > 0);
-
       const configToSave = {
         ...config,
-        globalMiddlewares: middlewares,
+        globalMiddlewares: config.globalMiddlewares
+          .map((m) => m.trim())
+          .filter((m) => m.length > 0),
       };
 
       const response = await fetch("/api/config", {
@@ -71,37 +74,30 @@ export function useConfig() {
       });
 
       if (response.ok) {
-        const updatedConfig = await response.json();
-        // Ensure all fields are properly set
-        const safeConfig = {
-          globalMiddlewares: Array.isArray(updatedConfig.globalMiddlewares) ? updatedConfig.globalMiddlewares : [],
-          adminPanelDomain: updatedConfig.adminPanelDomain || "localhost:3000",
-          defaultEntrypoint: updatedConfig.defaultEntrypoint || "",
-          defaultEnableDurationMinutes: updatedConfig.defaultEnableDurationMinutes ?? 720,
-        };
+        const safeConfig = normalizeConfig(await response.json());
         setConfig(safeConfig);
         setOriginalConfig(safeConfig);
-        setMiddlewareText(safeConfig.globalMiddlewares.join("\n"));
+        toast("Configuration saved");
       } else {
-        console.error("Failed to save config:", response.status, response.statusText);
+        const body = await response.text();
+        console.error("Failed to save config:", response.status, body);
+        toast("Failed to save configuration", "error");
       }
     } catch (error) {
       console.error("Error saving config:", error);
+      toast("Failed to save configuration", "error");
     } finally {
       setIsSaving(false);
     }
-  }, [config, middlewareText]);
+  }, [config]);
 
   const handleDiscard = useCallback(() => {
     setConfig(originalConfig);
-    setMiddlewareText(originalConfig.globalMiddlewares.join("\n"));
   }, [originalConfig]);
 
   return {
     config,
     setConfig,
-    middlewareText,
-    setMiddlewareText,
     isLoading,
     isSaving,
     hasUnsavedChanges,

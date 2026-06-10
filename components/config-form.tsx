@@ -3,24 +3,17 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MiddlewareSelect } from "@/components/traefik/middleware-select";
 import { DURATION_PRESETS } from "@/lib/duration-presets";
 import { GlobalConfig } from "@/lib/hooks/use-config";
 
 interface ConfigFormProps {
   config: GlobalConfig;
   onConfigChange: (config: GlobalConfig) => void;
-  middlewareText: string;
-  onMiddlewareTextChange: (text: string) => void;
 }
 
-export function ConfigForm({
-  config,
-  onConfigChange,
-  middlewareText,
-  onMiddlewareTextChange
-}: ConfigFormProps) {
+export function ConfigForm({ config, onConfigChange }: ConfigFormProps) {
   return (
     <div className="space-y-6">
       {/* Domain & Certificate Settings */}
@@ -64,8 +57,15 @@ export function ConfigForm({
               <Select
                 value={config.defaultEnableDurationMinutes?.toString() || "null"}
                 onValueChange={(value) => {
+                  // Ignore spurious empty-string events from the Select component
+                  if (value === "") return;
                   const duration = value === "null" ? null : parseInt(value);
-                  onConfigChange({ ...config, defaultEnableDurationMinutes: duration });
+                  onConfigChange({
+                    ...config,
+                    defaultEnableDurationMinutes: Number.isNaN(duration as number)
+                      ? null
+                      : duration,
+                  });
                 }}
               >
                 <SelectTrigger>
@@ -106,21 +106,22 @@ export function ConfigForm({
         <CardHeader>
           <CardTitle>Global Middlewares</CardTitle>
           <CardDescription>
-            Middlewares that will be applied to all services (one per line)
+            Middlewares applied to every service, before service-specific ones
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            <Label htmlFor="middlewares">Middleware Names</Label>
-            <Textarea
-              id="middlewares"
-              placeholder={`compression\nsecurity-headers\nrate-limit`}
-              value={middlewareText}
-              onChange={(e) => onMiddlewareTextChange(e.target.value)}
-              className="min-h-[120px]"
+            <Label htmlFor="middlewares">Apply middlewares</Label>
+            <MiddlewareSelect
+              value={config.globalMiddlewares}
+              onChange={(names) =>
+                onConfigChange({ ...config, globalMiddlewares: names })
+              }
             />
             <p className="text-xs text-muted-foreground">
-              Enter middleware names, one per line. These will be applied before service-specific middlewares.
+              Pick middlewares discovered from the Traefik API — same selector
+              as on the service form. Applied in order before service-specific
+              middlewares.
             </p>
           </div>
         </CardContent>
@@ -143,7 +144,7 @@ export function ConfigForm({
             <pre>{`Example service configuration:
 Domain: myservice.[configured-domain]
 Certificate: [per-domain cert resolver]${config.defaultEntrypoint ? `\nEntrypoint: ${config.defaultEntrypoint}` : ''}
-Middlewares: [${middlewareText.split('\n').filter(m => m.trim()).join(', ')}] + auth + service-specific
+Middlewares: [${config.globalMiddlewares.join(', ')}] + auth + service-specific
 
 Note: Domains and certificates are now configured individually in the Domains page.
 Each domain can have its own certificate resolver and wildcard settings.`}</pre>

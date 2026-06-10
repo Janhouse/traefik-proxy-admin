@@ -11,8 +11,6 @@ export default function ConfigPage() {
   const {
     config,
     setConfig,
-    middlewareText,
-    setMiddlewareText,
     isLoading,
     isSaving,
     hasUnsavedChanges,
@@ -55,12 +53,7 @@ export default function ConfigPage() {
         }
       />
       <PageMain>
-        <ConfigForm
-          config={config}
-          onConfigChange={setConfig}
-          middlewareText={middlewareText}
-          onMiddlewareTextChange={setMiddlewareText}
-        />
+        <ConfigForm config={config} onConfigChange={setConfig} />
       </PageMain>
     </AppLayout>
   );
