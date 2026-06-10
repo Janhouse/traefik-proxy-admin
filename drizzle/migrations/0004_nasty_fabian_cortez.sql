@@ -1,1 +1,1 @@
-ALTER TABLE "services" ADD COLUMN "request_headers" text;
+ALTER TABLE "services" ADD COLUMN IF NOT EXISTS "request_headers" text;
