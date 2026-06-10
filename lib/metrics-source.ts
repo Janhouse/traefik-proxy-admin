@@ -3,7 +3,7 @@ import { db, services, domains, routerMetricSamples } from "@/lib/db";
 import type { NewRouterMetricSample } from "@/lib/db/schema";
 import { eq, gte, lt } from "drizzle-orm";
 import { getTraefikApiUrl } from "@/lib/traefik-api";
-import { serviceRouterNames } from "@/lib/traefik-config";
+import { routerServiceMatcher } from "@/lib/traefik-config";
 import { fetchMetricsText, parseProm, stripProvider } from "@/lib/prometheus";
 import type { MetricsResponse, TrafficMetrics } from "@/lib/traefik-client-types";
 
@@ -59,22 +59,16 @@ const prevDur = new Map<string, { sum: number; count: number }>(); // router -> 
 let lastScrapeOk = false;
 let lastRouterLinesSeen = 0;
 
-/** Map router name -> admin service id (all services, all hostname modes).
- * Includes the per-entrypoint split routers (`router-<identifier>-<ep>`) so
- * traffic on every entrypoint maps back to the owning service. */
-async function buildRouterServiceMap(): Promise<Map<string, string>> {
+/** Matcher from router name -> admin service id (all services, all hostname
+ * modes). Covers the per-entrypoint split routers AND, via identifier-prefix
+ * fallback, routers generated from an old entrypoint selection that Traefik
+ * still serves — their traffic keeps counting toward the owning service. */
+async function buildRouterServiceMatcher(): Promise<(name: string) => string | null> {
   const rows = await db
     .select({ service: services, domain: domains })
     .from(services)
     .leftJoin(domains, eq(services.domainId, domains.id));
-  const map = new Map<string, string>();
-  for (const { service, domain } of rows) {
-    if (!domain) continue;
-    for (const name of serviceRouterNames(service, domain)) {
-      map.set(name, service.id);
-    }
-  }
-  return map;
+  return routerServiceMatcher(rows);
 }
 
 class MetricsScheduler {
@@ -159,13 +153,13 @@ class MetricsScheduler {
     lastRouterLinesSeen = routerLines;
     if (routerLines === 0) return; // router labels not enabled in Traefik
 
-    const routerMap = await buildRouterServiceMap();
+    const matchService = await buildRouterServiceMatcher();
     const now = new Date();
     const inserts: NewRouterMetricSample[] = [];
 
     const routers = new Set<string>([...curReq.keys(), ...curDur.keys()]);
     for (const router of routers) {
-      const serviceId = routerMap.get(router);
+      const serviceId = matchService(router);
       if (!serviceId) continue; // internal / unmatched router
 
       const cur = curReq.get(router) || new Map<string, number>();

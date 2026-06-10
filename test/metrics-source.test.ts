@@ -59,8 +59,14 @@ vi.mock("@/lib/traefik-api", () => ({
 }));
 
 vi.mock("@/lib/traefik-config", () => ({
-  serviceRouterNames: (service: { id: string }) =>
-    h.state.routerNames.get(service.id) || [],
+  routerServiceMatcher:
+    (rows: Array<{ service: { id: string } }>) => (name: string) => {
+      for (const { service } of rows) {
+        if ((h.state.routerNames.get(service.id) || []).includes(name))
+          return service.id;
+      }
+      return null;
+    },
 }));
 
 vi.mock("@/lib/prometheus", () => ({

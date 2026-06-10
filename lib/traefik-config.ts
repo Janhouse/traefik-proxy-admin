@@ -165,12 +165,6 @@ function routerNamesForIdentifier(identifier: string, eps: string[]): string[] {
 }
 
 /**
- * All router names this service may appear under in Traefik. With multiple
- * entrypoints, one router per entrypoint is emitted (`router-<id>-<ep>`); the
- * un-suffixed base name is included too so a stale runtime (old config still
- * loaded) keeps mapping back to the service.
- */
-/**
  * Resolve a service's entrypoint list from its columns. A non-null
  * `entrypoints` column owns the truth even when it parses empty ("[]" was only
  * ever written by the editor meaning "none selected") — only a null column
@@ -183,6 +177,11 @@ export function resolveServiceEntrypoints(service: Service): string[] {
   return service.entrypoint ? [service.entrypoint] : [];
 }
 
+/**
+ * All router names this service currently emits into Traefik. With multiple
+ * entrypoints, one router per entrypoint (`router-<id>-<ep>`); the un-suffixed
+ * base name is always included.
+ */
 export function serviceRouterNames(service: Service, domain: Domain): string[] {
   const eps = resolveServiceEntrypoints(service);
   const identifier = generateServiceIdentifier(service, domain);
@@ -193,6 +192,46 @@ export function serviceRouterNames(service: Service, domain: Domain): string[] {
     ...routerNamesForIdentifier(identifier, eps),
     ...routerNamesForIdentifier(`${identifier}-${service.id.slice(0, 8)}`, eps),
   ];
+}
+
+/**
+ * Build a matcher from runtime router names back to owning service ids.
+ *
+ * Exact names (serviceRouterNames) are tried first; otherwise the LONGEST
+ * `router-<identifier>` prefix wins. The prefix pass is what keeps a service
+ * attributed to itself while Traefik still serves routers generated from an
+ * OLD entrypoint selection (`router-<id>-<oldEp>` no longer appears in
+ * serviceRouterNames once the selection changes) — without it the editor
+ * flags the service's own stale routers as foreign and blocks saving.
+ * Longest-prefix ordering disambiguates identifiers that prefix each other
+ * (e.g. app-example-com vs app-example-com-mx).
+ */
+export function routerServiceMatcher(
+  rows: Array<{ service: Service; domain: Domain | null }>
+): (bareRouterName: string) => string | null {
+  const exact = new Map<string, string>();
+  const prefixes: Array<{ base: string; serviceId: string }> = [];
+  for (const { service, domain } of rows) {
+    if (!domain) continue;
+    for (const name of serviceRouterNames(service, domain)) {
+      exact.set(name, service.id);
+    }
+    const identifier = generateServiceIdentifier(service, domain);
+    prefixes.push({ base: `router-${identifier}`, serviceId: service.id });
+    prefixes.push({
+      base: `router-${identifier}-${service.id.slice(0, 8)}`,
+      serviceId: service.id,
+    });
+  }
+  prefixes.sort((a, b) => b.base.length - a.base.length);
+  return (bareRouterName: string) => {
+    const hit = exact.get(bareRouterName);
+    if (hit) return hit;
+    for (const { base, serviceId } of prefixes) {
+      if (bareRouterName.startsWith(`${base}-`)) return serviceId;
+    }
+    return null;
+  };
 }
 
 /** Path matcher appended to cert-trigger router rules so they can never steal

@@ -70,6 +70,7 @@ import {
   certTriggerRouterNames,
   generateServiceIdentifier,
   generateTraefikConfig,
+  routerServiceMatcher,
   serviceRouterNames,
   wildcardCertRouterName,
 } from "@/lib/traefik-config";
@@ -221,6 +222,36 @@ describe("serviceRouterNames", () => {
     for (const name of emitted) {
       expect(names).toContain(name);
     }
+  });
+});
+
+describe("routerServiceMatcher", () => {
+  it("matches stale per-entrypoint names by identifier prefix", () => {
+    // service now has ONE entrypoint, but the runtime still serves routers
+    // from the old multi-entrypoint selection
+    const match = routerServiceMatcher([
+      { service: mkService({ entrypoints: '["extranet"]' }), domain: mkDomain() },
+    ]);
+    expect(match("router-app-example-com")).toBe(mkService().id);
+    expect(match("router-app-example-com-extranet")).toBe(mkService().id);
+    expect(match("router-app-example-com-websecure")).toBe(mkService().id);
+    expect(match("router-other-example-com")).toBeNull();
+    expect(match("wildcard-cert-router-example-com")).toBeNull();
+  });
+
+  it("prefers the longest identifier when one prefixes another", () => {
+    const a = mkService({ id: "aaaaaaaa-0000-0000-0000-000000000000" });
+    const b = mkService({
+      id: "bbbbbbbb-0000-0000-0000-000000000000",
+      domainId: "domain-2",
+    });
+    const match = routerServiceMatcher([
+      { service: a, domain: mkDomain() }, // app.example.com
+      { service: b, domain: mkDomain({ id: "domain-2", domain: "example.com.mx" }) }, // app.example.com.mx
+    ]);
+    expect(match("router-app-example-com-web")).toBe(a.id);
+    expect(match("router-app-example-com-mx-web")).toBe(b.id);
+    expect(match("router-app-example-com-mx")).toBe(b.id);
   });
 });
 

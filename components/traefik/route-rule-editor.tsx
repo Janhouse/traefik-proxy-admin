@@ -143,7 +143,9 @@ export function RouteRuleEditor({
   const convertedOnce = useRef(false);
 
   const { entrypoints } = useTraefikEntrypoints();
-  const { conflicts } = useRouteConflicts();
+  // Poll: Traefik re-reads our config every ~10s, so a stale-router conflict
+  // (e.g. right after changing entrypoints) clears itself within a cycle.
+  const { conflicts } = useRouteConflicts(15_000);
 
   const domainName = domains.find((d) => d.id === domainId)?.domain || "";
 

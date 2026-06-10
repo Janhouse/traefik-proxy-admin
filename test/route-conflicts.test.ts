@@ -220,4 +220,50 @@ describe("getRouteConflicts", () => {
     });
     expect(res.routers[0].internal).toBeUndefined();
   });
+
+  it("maps a stale per-entrypoint router back to the service after the selection changed", async () => {
+    // The DB now says one entrypoint (extranet only), so serviceRouterNames no
+    // longer contains the suffixed names — but Traefik still serves the router
+    // from the OLD multi-entrypoint selection. Prefix matching must attribute
+    // it to the service instead of blocking the editor as a foreign conflict.
+    h.state.joinRows = [
+      { service: mkService({ entrypoints: '["extranet"]' }), domain: mkDomain() },
+    ];
+    h.state.allDomains = [mkDomain()];
+    h.state.httpRouters = [
+      {
+        name: "router-app-example-com-extranet@http",
+        rule: "Host(`app.example.com`)",
+        entryPoints: ["extranet"],
+      },
+      {
+        name: "router-app-example-com-websecure@http",
+        rule: "Host(`app.example.com`)",
+        entryPoints: ["websecure"],
+      },
+    ];
+
+    const res = await getRouteConflicts();
+    for (const router of res.routers) {
+      expect(router.managedServiceId).toBe(SERVICE_ID);
+    }
+  });
+
+  it("flags unmapped http-provider routers as internal (the http provider IS this tool)", async () => {
+    // e.g. a router for a deleted/renamed service that Traefik still serves —
+    // it cannot be a conflict "outside this tool".
+    h.state.joinRows = [];
+    h.state.allDomains = [mkDomain()];
+    h.state.httpRouters = [
+      {
+        name: "router-old-deleted-service@http",
+        rule: "Host(`old.example.com`)",
+        entryPoints: ["websecure"],
+      },
+    ];
+
+    const res = await getRouteConflicts();
+    expect(res.routers[0].managedServiceId).toBeNull();
+    expect(res.routers[0].internal).toBe(true);
+  });
 });

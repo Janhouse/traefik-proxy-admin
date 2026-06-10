@@ -8,7 +8,7 @@ import {
 } from "@/lib/traefik-api";
 import {
   certTriggerRouterNames,
-  serviceRouterNames,
+  routerServiceMatcher,
   wildcardCertRouterName,
 } from "@/lib/traefik-config";
 import { hostTokensOfRule } from "@/lib/route-rule";
@@ -40,15 +40,10 @@ export async function getRouteConflicts(): Promise<RouteConflictsResponse> {
     .select({ service: services, domain: domains })
     .from(services)
     .leftJoin(domains, eq(services.domainId, domains.id));
-  const managed = new Map<string, string>(); // router name -> serviceId
-  for (const { service, domain } of rows) {
-    if (!domain) continue;
-    // Every name the service may appear under: the base `router-<identifier>`
-    // plus the per-entrypoint `router-<identifier>-<ep>` split routers.
-    for (const name of serviceRouterNames(service, domain)) {
-      managed.set(name, service.id);
-    }
-  }
+  // Exact names plus longest-identifier-prefix fallback, so routers generated
+  // from an OLD entrypoint selection (still served until Traefik re-polls)
+  // keep mapping to their service instead of surfacing as foreign conflicts.
+  const matchService = routerServiceMatcher(rows);
 
   // This tool's own cert-trigger routers, across ALL domains (including
   // domains that currently have no services).
@@ -63,13 +58,20 @@ export async function getRouteConflicts(): Promise<RouteConflictsResponse> {
 
   const out: RouteConflictRouter[] = routers.map((r) => {
     const bareName = (r.name || "").split("@")[0];
+    const provider = providerOf(r);
+    const managedServiceId = matchService(bareName);
+    // Traefik supports a single HTTP provider and it is this tool, so any
+    // unmapped router from it is OURS (stale name from a deleted/renamed
+    // service, or a trigger) — never a conflict "outside this tool".
+    const internal =
+      internalNames.has(bareName) || (!managedServiceId && provider === "http");
     return {
       routerName: r.name || "",
       hosts: hostTokensOfRule(r.rule || ""),
       entryPoints: r.entryPoints || [],
-      provider: providerOf(r),
-      managedServiceId: managed.get(bareName) || null,
-      ...(internalNames.has(bareName) && { internal: true }),
+      provider,
+      managedServiceId,
+      ...(internal && { internal: true }),
     };
   });
 

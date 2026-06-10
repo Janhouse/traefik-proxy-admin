@@ -75,9 +75,10 @@ export function useTraefikMetrics(pollMs = 0) {
   return { metrics: data, loading, refresh };
 }
 
-export function useRouteConflicts() {
+export function useRouteConflicts(pollMs = 0) {
   const { data, loading, refresh } = useFetched<RouteConflictsResponse>(
-    "/api/traefik/conflicts"
+    "/api/traefik/conflicts",
+    pollMs
   );
   return { conflicts: data, loading, refresh };
 }
