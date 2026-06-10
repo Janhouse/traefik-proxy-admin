@@ -32,6 +32,7 @@ import {
   targetAddress,
   serviceEntrypoints,
 } from "@/lib/service-display";
+import { countMatchers, parseMatchRules } from "@/lib/route-rule";
 import type { BackendHealthResponse, MetricsResponse } from "@/lib/traefik-client-types";
 
 export interface Service {
@@ -45,7 +46,7 @@ export interface Service {
   targetPort: number;
   entrypoint?: string | null;
   entrypoints?: string | null; // JSON string[]
-  matchRules?: string | null; // JSON MatchRule[]
+  matchRules?: string | null; // JSON RuleNode[] (matchers + groups)
   isHttps: boolean;
   insecureSkipVerify: boolean;
   enabled: boolean;
@@ -244,6 +245,9 @@ export function ServiceTable({
             const host = primaryHostname(service);
             const url = publicUrl(service);
             const middlewares = parseMiddlewareNames(service.middlewares);
+            const matcherCount = countMatchers(
+              parseMatchRules(service.matchRules ?? null)
+            );
             const h = health?.services[service.id];
             const healthState = h?.state ?? (service.enabled ? "unknown" : "na");
             const m = metrics?.services[service.id];
@@ -272,11 +276,19 @@ export function ServiceTable({
                     <MetaBadge
                       key={ep}
                       variant="https"
-                      title="Served on this entrypoint"
+                      title="A dedicated router is generated on this entrypoint"
                     >
                       {ep}
                     </MetaBadge>
                   ))}
+                  {matcherCount > 0 && (
+                    <MetaBadge
+                      variant="info"
+                      title="Additional match rules refine this route"
+                    >
+                      +{matcherCount} rule{matcherCount > 1 ? "s" : ""}
+                    </MetaBadge>
+                  )}
                   {service.isHttps && (
                     <MetaBadge variant="info">HTTPS</MetaBadge>
                   )}

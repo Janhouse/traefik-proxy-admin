@@ -557,7 +557,34 @@
   .m-conn { flex: none; width: 48px; text-align: center; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--brand-2); background: color-mix(in oklab, var(--brand-2) 12%, transparent); border: 1px solid color-mix(in oklab, var(--brand-2) 25%, transparent); border-radius: 6px; padding: 7px 0; cursor: pointer; transition: .14s; }
   .m-conn:hover { background: color-mix(in oklab, var(--brand-2) 22%, transparent); }
   .m-conn[data-conn="OR"] { color: var(--warn); background: color-mix(in oklab, var(--warn) 12%, transparent); border-color: color-mix(in oklab, var(--warn) 28%, transparent); }
+  .m-conn.ghost { opacity: .35; cursor: default; }
   .addmatch-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 288px; background: var(--popover); border: 1px solid var(--border-strong); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 6px; max-height: 320px; overflow: auto; }
+
+  /* drag handle on matcher rows + group headers */
+  .m-grip { flex: none; width: 24px; height: 32px; display: grid; place-items: center; border: none; background: transparent; color: var(--meta); border-radius: 6px; cursor: grab; touch-action: none; padding: 0; transition: color .12s, background .12s; }
+  .m-grip:hover:not(:disabled) { color: var(--fg-2); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+  .m-grip:active { cursor: grabbing; }
+  .m-grip:disabled { opacity: .4; cursor: default; }
+  .m-grip svg { width: 14px; height: 14px; }
+  .matcher-row.dragging, .matcher-group.dragging { opacity: .5; z-index: 30; position: relative; }
+
+  /* group panel: a parenthesized sub-expression rendered as a nested card */
+  .matcher-group { border: 1px solid color-mix(in oklab, var(--brand-2) 32%, var(--border)); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface-2) 55%, transparent); overflow: visible; }
+  .mg-head { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); background: color-mix(in oklab, var(--brand-2) 7%, transparent); border-radius: var(--radius-md) var(--radius-md) 0 0; position: relative; }
+  .mg-label { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+  .mg-count { font-family: var(--font-mono); font-size: 10.5px; color: var(--meta); background: var(--surface-2); border: 1px solid var(--border-soft); padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+  .mg-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .mg-btn { border: none; background: transparent; color: var(--muted-foreground); font-size: 11.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border-radius: 5px; transition: color .12s, background .12s; }
+  .mg-btn:hover:not(:disabled) { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+  .mg-btn.danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
+  .mg-btn:disabled { opacity: .45; cursor: default; }
+  .mg-body { display: flex; flex-direction: column; gap: 9px; padding: 10px; border-radius: 0 0 var(--radius-md) var(--radius-md); transition: background .14s; }
+  .mg-empty { border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 12px; text-align: center; color: var(--meta); font-size: 12px; }
+  .mg-nested { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
+
+  /* droppable highlight while dragging over a container */
+  .mg-body.drop-over, .matchers.drop-over { background: color-mix(in oklab, var(--brand) 8%, transparent); border-radius: var(--radius-sm); }
+  .mg-body.drop-over .mg-empty { border-color: color-mix(in oklab, var(--brand) 55%, transparent); color: var(--brand); }
 
   .rule-preview { background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
   .rp-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); background: color-mix(in oklab, var(--surface-2) 50%, transparent); }

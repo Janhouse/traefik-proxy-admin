@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Service } from "@/components/service-table";
-import type { MatchRule } from "@/lib/route-rule";
+import type { RuleNode } from "@/lib/route-rule";
 import { parseMatchRules } from "@/lib/route-rule";
 import { serviceEntrypoints } from "@/lib/service-display";
 
@@ -13,7 +13,8 @@ export type ServiceFormData = Omit<
   middlewares?: string | string[] | null;
   /** managed by the route editor, submitted as arrays */
   entrypoints?: string[];
-  matchRules?: MatchRule[];
+  /** rule tree: matchers and parenthesized groups */
+  matchRules?: RuleNode[];
 };
 
 interface UseServiceFormOptions {

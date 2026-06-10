@@ -189,11 +189,11 @@ export default function ServiceDetailPage() {
               </KV>
               <KV label="Hostname mode">{service.hostnameMode}</KV>
               <KV label="Domain">{service.domain?.domain || "—"}</KV>
-              <KV label="Entrypoints">
+              <KV label="Entrypoints (one router each)">
                 {serviceEntrypoints(service).length ? (
                   serviceEntrypoints(service).join(", ")
                 ) : (
-                  <span className="text-[var(--meta)]">default</span>
+                  <span className="text-[var(--meta)]">global default</span>
                 )}
               </KV>
               <KV label="Rule">

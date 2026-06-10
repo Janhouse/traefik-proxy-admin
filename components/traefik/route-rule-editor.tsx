@@ -12,7 +12,27 @@ import {
   Network,
   Copy,
   AlertTriangle,
+  GripVertical,
+  Group as GroupIcon,
+  Ungroup as UngroupIcon,
 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCorners,
+  useSensor,
+  useSensors,
+  useDroppable,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useTraefikEntrypoints, useRouteConflicts } from "@/hooks/use-traefik";
 import { toast } from "@/components/toaster";
 import {
@@ -22,10 +42,26 @@ import {
   hostToken,
   assembleRule,
   tokenizeRule,
+  isGroup,
+  updateNode,
+  removeNode,
+  insertNode,
+  ungroupNode,
+  countMatchers,
   type MatchRule,
   type MatchType,
+  type RuleGroup,
+  type RuleNode,
+  type NodePath,
   type HostnameMode,
 } from "@/lib/route-rule";
+import {
+  applyDrop,
+  containerChildren,
+  containerId,
+  itemId,
+  parseDndId,
+} from "@/lib/route-rule-dnd";
 
 interface DomainLite {
   id: string;
@@ -39,7 +75,7 @@ interface RouteRuleValue {
   subdomain: string | null;
   hostnameMode: HostnameMode;
   entrypoints: string[];
-  matchRules: MatchRule[];
+  matchRules: RuleNode[];
 }
 
 interface RouteRuleEditorProps {
@@ -49,7 +85,7 @@ interface RouteRuleEditorProps {
     hostnameMode: HostnameMode;
     customHostnames?: string | null;
     entrypoints: string[];
-    matchRules: MatchRule[];
+    matchRules: RuleNode[];
   };
   domains: DomainLite[];
   serviceId?: string;
@@ -75,6 +111,16 @@ function epIcon(name: string) {
   return <Network />;
 }
 
+function newMatcher(type: MatchType): MatchRule {
+  return {
+    type,
+    conn: type === "Host" ? "OR" : "AND",
+    value: "",
+    key: "",
+    method: "GET",
+  };
+}
+
 export function RouteRuleEditor({
   initial,
   domains,
@@ -89,13 +135,11 @@ export function RouteRuleEditor({
     initial.hostnameMode === "apex" ? "apex" : "subdomain"
   );
   const [eps, setEps] = useState<string[]>(initial.entrypoints);
-  const [matchers, setMatchers] = useState<MatchRule[]>(initial.matchRules);
+  const [nodes, setNodes] = useState<RuleNode[]>(initial.matchRules);
   const [converted, setConverted] = useState(false);
 
   const [domainOpen, setDomainOpen] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
   const domainRef = useRef<HTMLDivElement>(null);
-  const addRef = useRef<HTMLDivElement>(null);
   const convertedOnce = useRef(false);
 
   const { entrypoints } = useTraefikEntrypoints();
@@ -133,7 +177,7 @@ export function RouteRuleEditor({
       setSub("");
       extra = hosts;
     }
-    setMatchers(extra.map((h) => ({ type: "Host", conn: "OR", value: h })));
+    setNodes(extra.map((h) => ({ type: "Host", conn: "OR", value: h })));
     setConverted(true);
   }, [domains, domainId, initial]);
 
@@ -144,18 +188,16 @@ export function RouteRuleEditor({
       subdomain: mode === "subdomain" ? sub || null : null,
       hostnameMode: mode,
       entrypoints: eps,
-      matchRules: matchers,
+      matchRules: nodes,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [domainId, sub, mode, eps, matchers]);
+  }, [domainId, sub, mode, eps, nodes]);
 
-  // close popovers on outside click
+  // close domain popover on outside click
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (domainRef.current && !domainRef.current.contains(e.target as Node))
         setDomainOpen(false);
-      if (addRef.current && !addRef.current.contains(e.target as Node))
-        setAddOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -163,8 +205,8 @@ export function RouteRuleEditor({
 
   const primaryHost = hostToken(mode, sub, domainName || "domain.com");
   const rule = useMemo(
-    () => assembleRule(primaryHost, matchers),
-    [primaryHost, matchers]
+    () => assembleRule(primaryHost, nodes),
+    [primaryHost, nodes]
   );
   const tokens = useMemo(() => tokenizeRule(rule), [rule]);
 
@@ -180,6 +222,7 @@ export function RouteRuleEditor({
   const conflict = useMemo(() => {
     if (!conflicts?.reachable || !domainName) return null;
     for (const r of conflicts.routers) {
+      if (r.internal) continue; // our own cert-trigger routers are not conflicts
       if (r.managedServiceId && serviceId && r.managedServiceId === serviceId)
         continue; // this service
       if (!r.hosts.includes(primaryHost)) continue;
@@ -196,22 +239,40 @@ export function RouteRuleEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocked]);
 
-  // ── matcher ops ──────────────────────────────────────────────────────────
-  const addMatcher = (type: MatchType) => {
-    setMatchers((m) => [
-      ...m,
-      { type, conn: type === "Host" ? "OR" : "AND", value: "", key: "", method: "GET" },
-    ]);
-    setAddOpen(false);
-  };
-  const updateMatcher = (i: number, patch: Partial<MatchRule>) =>
-    setMatchers((m) => m.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const removeMatcher = (i: number) =>
-    setMatchers((m) => m.filter((_, j) => j !== i));
+  // ── tree ops (all through the pure helpers in lib/route-rule) ────────────
+  const patchNode = (path: NodePath, patch: Partial<MatchRule> | Partial<RuleGroup>) =>
+    setNodes((cur) => updateNode(cur, path, patch));
+  const deleteNode = (path: NodePath) => setNodes((cur) => removeNode(cur, path));
+  const ungroup = (path: NodePath) => setNodes((cur) => ungroupNode(cur, path));
+  const addMatcherInto = (container: NodePath, type: MatchType) =>
+    setNodes((cur) => {
+      const list = containerChildren(cur, container);
+      if (!list) return cur;
+      return insertNode(cur, [...container, list.length], newMatcher(type));
+    });
+  const addGroup = () =>
+    setNodes((cur) =>
+      insertNode(cur, [cur.length], { kind: "group", conn: "AND", children: [] })
+    );
   const toggleEp = (name: string) =>
     setEps((cur) =>
       cur.includes(name) ? cur.filter((e) => e !== name) : [...cur, name]
     );
+
+  // ── drag & drop ───────────────────────────────────────────────────────────
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const a = parseDndId(String(active.id));
+    const o = parseDndId(String(over.id));
+    if (!a || a.kind !== "item" || !o) return;
+    setNodes((cur) => applyDrop(cur, a.path, o));
+  };
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -381,7 +442,8 @@ export function RouteRuleEditor({
           })}
         </div>
         <span className="text-[12px] text-[var(--meta)]">
-          A router can bind several entrypoints. Empty = the global default.
+          One router is generated per selected entrypoint — same middlewares on
+          each, TLS only on TLS entrypoints. Empty = the global default.
         </span>
       </div>
 
@@ -392,118 +454,64 @@ export function RouteRuleEditor({
             Additional match rules{" "}
             <span className="font-normal text-[var(--meta)]">(optional)</span>
           </label>
-          <div className="relative" ref={addRef}>
+          <div className="flex items-center gap-2">
+            <AddRuleMenu
+              label="Add rule"
+              disabled={disabled}
+              onAdd={(type) => addMatcherInto([], type)}
+            />
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-1.5 text-[12.5px] font-semibold hover:border-[var(--border-strong)]"
               disabled={disabled}
-              onClick={() => setAddOpen((v) => !v)}
+              onClick={addGroup}
             >
-              <Plus className="h-3.5 w-3.5" /> Add rule
+              <GroupIcon className="h-3.5 w-3.5" /> Add group
             </button>
-            {addOpen && (
-              <div className="addmatch-menu">
-                {MATCHER_TYPES.map((t) => (
-                  <div
-                    key={t.key}
-                    className="tag-opt"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      addMatcher(t.key);
-                    }}
-                  >
-                    <span className="flex flex-col">
-                      <span className="nm">{t.label}</span>
-                      <span className="ty">{t.desc}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="matchers">
-          {matchers.map((m, i) => {
-            const def = matcherDef(m.type);
-            return (
-              <div className="matcher-row" key={i}>
-                <button
-                  type="button"
-                  className="m-conn"
-                  data-conn={m.conn}
-                  disabled={disabled}
-                  onClick={() =>
-                    updateMatcher(i, { conn: m.conn === "AND" ? "OR" : "AND" })
-                  }
-                  title="Toggle AND / OR"
-                >
-                  {m.conn === "OR" ? "OR" : "AND"}
-                </button>
-                <select
-                  className="m-type rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2 py-2 text-[13px]"
-                  value={m.type}
-                  disabled={disabled}
-                  onChange={(e) =>
-                    updateMatcher(i, { type: e.target.value as MatchType })
-                  }
-                >
-                  {MATCHER_TYPES.map((t) => (
-                    <option key={t.key} value={t.key}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-                {def.fields.includes("method") ? (
-                  <select
-                    className="rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2 py-2 text-[13px] font-mono"
-                    value={m.method || "GET"}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={nodes.map((_, i) => itemId([i]))}
+            strategy={verticalListSortingStrategy}
+          >
+            <RootDropZone disabled={disabled}>
+              {nodes.map((node, i) =>
+                isGroup(node) ? (
+                  <GroupPanel
+                    key={itemId([i])}
+                    path={[i]}
+                    group={node}
                     disabled={disabled}
-                    onChange={(e) => updateMatcher(i, { method: e.target.value })}
-                  >
-                    {METHODS.map((mm) => (
-                      <option key={mm} value={mm}>
-                        {mm}
-                      </option>
-                    ))}
-                  </select>
+                    onPatch={patchNode}
+                    onDelete={deleteNode}
+                    onUngroup={ungroup}
+                    onAddInto={addMatcherInto}
+                  />
                 ) : (
-                  <>
-                    {def.fields.includes("key") && (
-                      <input
-                        className="min-w-0 flex-1 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-2 font-mono text-[13px]"
-                        value={m.key || ""}
-                        placeholder={def.ph[0]}
-                        disabled={disabled}
-                        onChange={(e) => updateMatcher(i, { key: e.target.value })}
-                      />
-                    )}
-                    <input
-                      className="min-w-0 flex-[2] rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-2 font-mono text-[13px]"
-                      value={m.value || ""}
-                      placeholder={def.fields.includes("key") ? def.ph[1] : def.ph[0]}
-                      disabled={disabled}
-                      onChange={(e) => updateMatcher(i, { value: e.target.value })}
-                    />
-                  </>
-                )}
-                <button
-                  type="button"
-                  className="grid h-8 w-8 flex-none place-items-center rounded-[var(--radius-sm)] text-[var(--muted-foreground)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
-                  disabled={disabled}
-                  onClick={() => removeMatcher(i)}
-                  aria-label="Remove rule"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  <MatcherRow
+                    key={itemId([i])}
+                    path={[i]}
+                    matcher={node}
+                    disabled={disabled}
+                    onPatch={patchNode}
+                    onDelete={deleteNode}
+                  />
+                )
+              )}
+            </RootDropZone>
+          </SortableContext>
+        </DndContext>
         <span className="text-[12px] text-[var(--meta)]">
-          Refine beyond the host — path, header, query, method or client-IP. Path
-          matchers forward the full path; add a stripPrefix middleware if your
-          backend needs it.
+          Refine beyond the host — path, header, query, method or client-IP.
+          Drag the handles to reorder, or move rules into a group to build a
+          parenthesized sub-expression. Path matchers forward the full path; add
+          a stripPrefix middleware if your backend needs it.
         </span>
       </div>
 
@@ -534,6 +542,382 @@ export function RouteRuleEditor({
           )}
         </code>
       </div>
+    </div>
+  );
+}
+
+/* ── Root drop zone ─────────────────────────────────────────────────────────
+ * Must be its own component: useDroppable only registers when called from a
+ * component rendered INSIDE <DndContext>, and RouteRuleEditor is the one
+ * rendering the provider. */
+
+function RootDropZone({
+  disabled,
+  children,
+}: {
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: containerId([]),
+    disabled,
+  });
+  return (
+    <div className={`matchers ${isOver ? "drop-over" : ""}`} ref={setNodeRef}>
+      {children}
+    </div>
+  );
+}
+
+/* ── Add-rule popover (used by the toolbar and each group header) ──────────── */
+
+function AddRuleMenu({
+  label,
+  compact,
+  disabled,
+  onAdd,
+}: {
+  label: string;
+  compact?: boolean;
+  disabled?: boolean;
+  onAdd: (type: MatchType) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className={
+          compact
+            ? "mg-btn"
+            : "inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-1.5 text-[12.5px] font-semibold hover:border-[var(--border-strong)]"
+        }
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Plus className="h-3.5 w-3.5" /> {label}
+      </button>
+      {open && (
+        <div className="addmatch-menu">
+          {MATCHER_TYPES.map((t) => (
+            <div
+              key={t.key}
+              className="tag-opt"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onAdd(t.key);
+                setOpen(false);
+              }}
+            >
+              <span className="flex flex-col">
+                <span className="nm">{t.label}</span>
+                <span className="ty">{t.desc}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Sortable matcher row (works at any depth, addressed by NodePath) ──────── */
+
+function MatcherRow({
+  path,
+  matcher,
+  disabled,
+  hideConn,
+  onPatch,
+  onDelete,
+}: {
+  path: NodePath;
+  matcher: MatchRule;
+  disabled?: boolean;
+  /** First child of a group: its connector is meaningless, render it dimmed. */
+  hideConn?: boolean;
+  onPatch: (path: NodePath, patch: Partial<MatchRule>) => void;
+  onDelete: (path: NodePath) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: itemId(path), disabled });
+  const def = matcherDef(matcher.type);
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`matcher-row ${isDragging ? "dragging" : ""}`}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+    >
+      <button
+        type="button"
+        className="m-grip"
+        ref={setActivatorNodeRef}
+        disabled={disabled}
+        aria-label="Reorder rule"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical />
+      </button>
+      <button
+        type="button"
+        className={`m-conn ${hideConn ? "ghost" : ""}`}
+        data-conn={matcher.conn}
+        disabled={disabled || hideConn}
+        onClick={() =>
+          onPatch(path, { conn: matcher.conn === "AND" ? "OR" : "AND" })
+        }
+        title={
+          hideConn
+            ? "First rule of a group — the connector applies from the second rule on"
+            : "Toggle AND / OR"
+        }
+      >
+        {matcher.conn === "OR" ? "OR" : "AND"}
+      </button>
+      <select
+        className="m-type rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2 py-2 text-[13px]"
+        value={matcher.type}
+        disabled={disabled}
+        onChange={(e) => {
+          // ignore spurious empty-string change events
+          if (e.target.value === "") return;
+          onPatch(path, { type: e.target.value as MatchType });
+        }}
+      >
+        {MATCHER_TYPES.map((t) => (
+          <option key={t.key} value={t.key}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      {def.fields.includes("method") ? (
+        <select
+          className="rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2 py-2 text-[13px] font-mono"
+          value={matcher.method || "GET"}
+          disabled={disabled}
+          onChange={(e) => {
+            if (e.target.value === "") return;
+            onPatch(path, { method: e.target.value });
+          }}
+        >
+          {METHODS.map((mm) => (
+            <option key={mm} value={mm}>
+              {mm}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <>
+          {def.fields.includes("key") && (
+            <input
+              className="min-w-0 flex-1 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-2 font-mono text-[13px]"
+              value={matcher.key || ""}
+              placeholder={def.ph[0]}
+              disabled={disabled}
+              onChange={(e) => onPatch(path, { key: e.target.value })}
+            />
+          )}
+          <input
+            className="min-w-0 flex-[2] rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-2 font-mono text-[13px]"
+            value={matcher.value || ""}
+            placeholder={def.fields.includes("key") ? def.ph[1] : def.ph[0]}
+            disabled={disabled}
+            onChange={(e) => onPatch(path, { value: e.target.value })}
+          />
+        </>
+      )}
+      <button
+        type="button"
+        className="grid h-8 w-8 flex-none place-items-center rounded-[var(--radius-sm)] text-[var(--muted-foreground)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+        disabled={disabled}
+        onClick={() => onDelete(path)}
+        aria-label="Remove rule"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/* ── Sortable group panel: a parenthesized sub-expression with its own list ── */
+
+function GroupPanel({
+  path,
+  group,
+  disabled,
+  onPatch,
+  onDelete,
+  onUngroup,
+  onAddInto,
+}: {
+  path: NodePath;
+  group: RuleGroup;
+  disabled?: boolean;
+  onPatch: (path: NodePath, patch: Partial<MatchRule> | Partial<RuleGroup>) => void;
+  onDelete: (path: NodePath) => void;
+  onUngroup: (path: NodePath) => void;
+  onAddInto: (container: NodePath, type: MatchType) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: itemId(path), disabled });
+  const { setNodeRef: setDropRef, isOver: dropIsOver } = useDroppable({
+    id: containerId(path),
+    disabled,
+  });
+  const count = countMatchers(group.children);
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`matcher-group ${isDragging ? "dragging" : ""}`}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+    >
+      <div className="mg-head">
+        <button
+          type="button"
+          className="m-grip"
+          ref={setActivatorNodeRef}
+          disabled={disabled}
+          aria-label="Reorder group"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical />
+        </button>
+        <button
+          type="button"
+          className="m-conn"
+          data-conn={group.conn}
+          disabled={disabled}
+          onClick={() =>
+            onPatch(path, { conn: group.conn === "AND" ? "OR" : "AND" })
+          }
+          title="Toggle AND / OR — how this group joins the rule before it"
+        >
+          {group.conn === "OR" ? "OR" : "AND"}
+        </button>
+        <span className="mg-label">Group</span>
+        <span className="mg-count">
+          {count} rule{count === 1 ? "" : "s"}
+        </span>
+        <div className="mg-actions">
+          <AddRuleMenu
+            label="Add rule"
+            compact
+            disabled={disabled}
+            onAdd={(type) => onAddInto(path, type)}
+          />
+          <button
+            type="button"
+            className="mg-btn"
+            disabled={disabled}
+            onClick={() => onUngroup(path)}
+            title="Dissolve the group — its rules move up a level"
+          >
+            <UngroupIcon className="h-3.5 w-3.5" /> Ungroup
+          </button>
+          <button
+            type="button"
+            className="mg-btn danger"
+            disabled={disabled}
+            onClick={() => onDelete(path)}
+            aria-label="Delete group and its rules"
+            title="Delete the group and the rules inside it"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      <SortableContext
+        items={group.children.map((_, j) => itemId([...path, j]))}
+        strategy={verticalListSortingStrategy}
+      >
+        <div
+          ref={setDropRef}
+          className={`mg-body ${dropIsOver ? "drop-over" : ""}`}
+        >
+          {group.children.length === 0 && (
+            <div className="mg-empty">
+              Empty group — drag rules here or add one. Empty groups are
+              skipped in the generated rule.
+            </div>
+          )}
+          {group.children.map((child, j) =>
+            isGroup(child) ? (
+              // Model supports nesting but the UI keeps groups one level deep:
+              // surface stored nested groups read-only with escape hatches.
+              <div className="mg-nested" key={itemId([...path, j])}>
+                <span className="mg-label">Nested group</span>
+                <span className="mg-count">
+                  {countMatchers(child.children)} rule
+                  {countMatchers(child.children) === 1 ? "" : "s"}
+                </span>
+                <span className="text-[11.5px] text-[var(--meta)]">
+                  shown in the preview — ungroup to edit here
+                </span>
+                <div className="mg-actions">
+                  <button
+                    type="button"
+                    className="mg-btn"
+                    disabled={disabled}
+                    onClick={() => onUngroup([...path, j])}
+                    title="Dissolve the nested group — its rules move into this group"
+                  >
+                    <UngroupIcon className="h-3.5 w-3.5" /> Ungroup
+                  </button>
+                  <button
+                    type="button"
+                    className="mg-btn danger"
+                    disabled={disabled}
+                    onClick={() => onDelete([...path, j])}
+                    aria-label="Delete nested group"
+                    title="Delete the nested group and the rules inside it"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <MatcherRow
+                key={itemId([...path, j])}
+                path={[...path, j]}
+                matcher={child}
+                disabled={disabled}
+                hideConn={j === 0}
+                onPatch={onPatch}
+                onDelete={onDelete}
+              />
+            )
+          )}
+        </div>
+      </SortableContext>
     </div>
   );
 }
