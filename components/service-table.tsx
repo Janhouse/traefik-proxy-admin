@@ -32,7 +32,12 @@ import {
   targetAddress,
   serviceEntrypoints,
 } from "@/lib/service-display";
-import { countMatchers, parseMatchRules } from "@/lib/route-rule";
+import {
+  countMatchers,
+  isGroup,
+  parseMatchRules,
+  type RuleNode,
+} from "@/lib/route-rule";
 import type { BackendHealthResponse, MetricsResponse } from "@/lib/traefik-client-types";
 
 export interface Service {
@@ -93,6 +98,20 @@ function formatDuration(minutes: number | null | undefined): string {
   const d = Math.floor(minutes / 1440);
   const h = Math.floor((minutes % 1440) / 60);
   return h ? `${d}d${h}h` : `${d}d`;
+}
+
+/** Host rules ARE the hostname (shown as the URL), so the "+N rules" badge
+ * counts only the non-Host refinements. */
+function countExtraMatchers(nodes: RuleNode[]): number {
+  let hosts = 0;
+  const walk = (list: RuleNode[]) => {
+    for (const n of list) {
+      if (isGroup(n)) walk(n.children);
+      else if (n.type === "Host") hosts++;
+    }
+  };
+  walk(nodes);
+  return countMatchers(nodes) - hosts;
 }
 
 type Filter = "all" | "enabled" | "disabled";
@@ -245,7 +264,7 @@ export function ServiceTable({
             const host = primaryHostname(service);
             const url = publicUrl(service);
             const middlewares = parseMiddlewareNames(service.middlewares);
-            const matcherCount = countMatchers(
+            const matcherCount = countExtraMatchers(
               parseMatchRules(service.matchRules ?? null)
             );
             const h = health?.services[service.id];

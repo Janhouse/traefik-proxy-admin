@@ -32,7 +32,13 @@ import {
   targetAddress,
   serviceEntrypoints,
 } from "@/lib/service-display";
-import { assembleRule, parseMatchRules } from "@/lib/route-rule";
+import {
+  assembleRule,
+  assembleRuleFromTree,
+  parseMatchRules,
+  treeHasHost,
+} from "@/lib/route-rule";
+import { useDomains } from "@/lib/hooks/use-domains";
 import type { Service } from "@/components/service-table";
 
 export default function ServiceDetailPage() {
@@ -42,6 +48,9 @@ export default function ServiceDetailPage() {
   const { fetchServiceById, toggleService } = useServices();
   const { health } = useBackendHealth(15000);
   const { metrics } = useTraefikMetrics(15000);
+  // Host rules in the tree may reference any managed domain, not just the
+  // service's joined one — fetch the list to resolve them in the rule display.
+  const { domains, fetchDomains } = useDomains();
 
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,6 +65,7 @@ export default function ServiceDetailPage() {
 
   useEffect(() => {
     load();
+    fetchDomains();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId]);
 
@@ -73,6 +83,18 @@ export default function ServiceDetailPage() {
   const host = primaryHostname(service);
   const url = publicUrl(service);
   const middlewares = parseMiddlewareNames(service.middlewares);
+  // Tree-format services carry their own Host rules; legacy services keep the
+  // host in the columns and join it with assembleRule.
+  const tree = parseMatchRules(service.matchRules ?? null);
+  const resolveDomain = (id: string) =>
+    domains.find((d) => d.id === id)?.domain ??
+    (service.domain?.id === id ? service.domain.domain : null);
+  const ruleText = treeHasHost(tree)
+    ? assembleRuleFromTree(tree, resolveDomain)
+    : assembleRule(
+        primaryHostname(service) || service.domain?.domain || "",
+        tree
+      );
   const h = health?.services[service.id];
   const healthState = h?.state ?? (service.enabled ? "unknown" : "na");
   const m = metrics?.services[service.id];
@@ -197,12 +219,7 @@ export default function ServiceDetailPage() {
                 )}
               </KV>
               <KV label="Rule">
-                <span className="break-all text-[11px]">
-                  {assembleRule(
-                    primaryHostname(service) || service.domain?.domain || "",
-                    parseMatchRules(service.matchRules ?? null)
-                  )}
-                </span>
+                <span className="break-all text-[11px]">{ruleText}</span>
               </KV>
               <KV label="Target">{targetAddress(service)}</KV>
               <KV label="Upstream scheme">

@@ -523,6 +523,22 @@
   .host-opt .tag-default { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); background: var(--grad-brand-soft); padding: 2px 8px; border-radius: 999px; }
   .host-opt .ck { margin-left: auto; color: var(--brand); opacity: 0; }
   .host-opt.sel .ck { opacity: 1; }
+  .host-opt.free { border-top: 1px solid var(--border-soft); margin-top: 4px; padding-top: 9px; }
+  .host-opt.free .hn { font-family: inherit; font-size: 12.5px; color: var(--muted-foreground); }
+  .host-opt.free:hover .hn { color: var(--foreground); }
+
+  /* compact host composer inside a matcher row (Host rules in the rule tree) */
+  .host-row { position: relative; flex: 1; min-width: 0; }
+  .host-row.free { display: flex; align-items: center; gap: 7px; }
+  .host-row .host-compose.compact { padding-right: 4px; }
+  .host-row .host-compose.compact .host-string { padding-left: 10px; font-size: 13px; }
+  .host-row .host-compose.compact .host-sub input { padding: 8px 0; width: 8ch; }
+  .host-row .host-compose.compact .host-domain { padding: 8px 4px; }
+  .host-row .host-compose.compact .host-toggle { margin: 3px 0; padding: 2px; }
+  .host-row .host-compose.compact .host-toggle button { padding: 3px 9px; font-size: 11px; }
+  .host-row-link { flex: none; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted-foreground); font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 7px 9px; border-radius: var(--radius-sm); white-space: nowrap; transition: color .12s, border-color .12s; }
+  .host-row-link:hover:not(:disabled) { color: var(--foreground); border-color: var(--border-strong); }
+  .host-row-link:disabled { opacity: .45; cursor: default; }
 
   .ep-grid { display: flex; flex-wrap: wrap; gap: 10px; }
   .ep-card { display: flex; align-items: center; gap: 11px; padding: 10px 30px 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); cursor: pointer; position: relative; transition: border-color .14s, background .14s, transform .08s; min-width: 160px; }
@@ -532,7 +548,8 @@
   .ep-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-3); color: var(--muted-foreground); flex: none; }
   .ep-card.on .ep-ic { background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand); }
   .ep-meta { display: flex; flex-direction: column; line-height: 1.25; }
-  .ep-nm { font-family: var(--font-mono); font-weight: 600; font-size: 13.5px; color: var(--foreground); }
+  .ep-nm { font-family: var(--font-mono); font-weight: 600; font-size: 13.5px; color: var(--foreground); display: inline-flex; align-items: center; gap: 6px; }
+  .ep-api-badge { font-family: var(--font-sans, inherit); font-size: 9.5px; font-weight: 800; letter-spacing: .05em; color: var(--warn); background: color-mix(in oklab, var(--warn) 14%, transparent); border: 1px solid color-mix(in oklab, var(--warn) 32%, transparent); padding: 1px 6px; border-radius: 999px; }
   .ep-sub { font-size: 11.5px; color: var(--meta); font-family: var(--font-mono); }
   .ep-ck { position: absolute; top: 8px; right: 9px; width: 15px; height: 15px; color: var(--brand); opacity: 0; transform: scale(.6); transition: .16s; }
   .ep-card.on .ep-ck { opacity: 1; transform: scale(1); }
@@ -580,7 +597,9 @@
   .mg-btn:disabled { opacity: .45; cursor: default; }
   .mg-body { display: flex; flex-direction: column; gap: 9px; padding: 10px; border-radius: 0 0 var(--radius-md) var(--radius-md); transition: background .14s; }
   .mg-empty { border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 12px; text-align: center; color: var(--meta); font-size: 12px; }
-  .mg-nested { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
+  /* nested groups (UI max depth 2): fully editable panels with a deeper tint */
+  .matcher-group .matcher-group { border-color: color-mix(in oklab, var(--brand) 28%, var(--border)); background: color-mix(in oklab, var(--surface-3) 50%, transparent); }
+  .matcher-group .matcher-group > .mg-head { background: color-mix(in oklab, var(--brand) 6%, transparent); }
 
   /* droppable highlight while dragging over a container */
   .mg-body.drop-over, .matchers.drop-over { background: color-mix(in oklab, var(--brand) 8%, transparent); border-radius: var(--radius-sm); }
@@ -595,6 +614,9 @@
   .rp-code .fn { color: var(--brand-2); font-weight: 600; }
   .rp-code .str { color: var(--brand); }
   .rp-code .op { color: var(--muted-foreground); }
+  .rp-code .rp-empty { color: var(--meta); font-style: italic; font-family: inherit; }
+  .rp-copy:disabled { opacity: .45; cursor: default; }
+  .rp-url { padding: 8px 15px; border-top: 1px solid var(--border-soft); font-size: 12px; color: var(--meta); background: color-mix(in oklab, var(--surface-2) 50%, transparent); }
   :root:not(.dark) .rp-code { color: #2a3647; }
 
   /* ── Security screens (summary bar + section header) ────────────────────── */

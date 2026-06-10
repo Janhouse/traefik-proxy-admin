@@ -122,7 +122,7 @@ export function ServiceForm({
         <Section
           n={1}
           title="Domain & routing"
-          desc="Compose the public hostname, pick entrypoints, then refine the match rule."
+          desc="Build the match rule — the Host rule composes the public hostname — and pick entrypoints."
         >
           <RouteRuleEditor
             initial={routeInitial}
@@ -274,7 +274,7 @@ export function ServiceForm({
         <div className="mt-7 flex items-center justify-end gap-2.5 border-t pt-[18px]">
           {blocked && (
             <span className="mr-auto text-[12px] text-[var(--danger)]">
-              Resolve the route collision above before saving.
+              Resolve the routing issues above before saving.
             </span>
           )}
           <Button
