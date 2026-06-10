@@ -1,4 +1,4 @@
-CREATE TABLE "router_metric_samples" (
+CREATE TABLE IF NOT EXISTS "router_metric_samples" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"ts" timestamp DEFAULT now() NOT NULL,
 	"service_id" uuid,
@@ -12,6 +12,10 @@ CREATE TABLE "router_metric_samples" (
 	"dur_count" integer DEFAULT 0 NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "router_metric_samples" ADD CONSTRAINT "router_metric_samples_service_id_services_id_fk" FOREIGN KEY ("service_id") REFERENCES "public"."services"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "idx_router_metric_samples_ts" ON "router_metric_samples" USING btree ("ts");--> statement-breakpoint
-CREATE INDEX "idx_router_metric_samples_service_ts" ON "router_metric_samples" USING btree ("service_id","ts");
+DO $$ BEGIN
+	ALTER TABLE "router_metric_samples" ADD CONSTRAINT "router_metric_samples_service_id_services_id_fk" FOREIGN KEY ("service_id") REFERENCES "public"."services"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+	WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "idx_router_metric_samples_ts" ON "router_metric_samples" USING btree ("ts");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "idx_router_metric_samples_service_ts" ON "router_metric_samples" USING btree ("service_id","ts");
