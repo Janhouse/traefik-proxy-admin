@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Section } from "@/components/form-section";
+import { ManagedStaticSection } from "@/components/managed/managed-static-section";
 import { EntrypointSelect } from "@/components/traefik/entrypoint-select";
 import { MiddlewareSelect } from "@/components/traefik/middleware-select";
 import { DURATION_PRESETS } from "@/lib/duration-presets";
@@ -116,6 +117,9 @@ export function ConfigForm({ config, onConfigChange }: ConfigFormProps) {
           </p>
         </div>
       </Section>
+
+      {/* Renders nothing unless TRAEFIK_MANAGED is on (has its own Save). */}
+      <ManagedStaticSection />
     </div>
   );
 }

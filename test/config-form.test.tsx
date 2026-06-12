@@ -24,6 +24,11 @@ vi.mock("@/components/traefik/middleware-select", () => ({
   ),
 }));
 
+// The managed section talks to its own endpoint — irrelevant here.
+vi.mock("@/components/managed/managed-static-section", () => ({
+  ManagedStaticSection: () => null,
+}));
+
 // Stand-in for EntrypointSelect: a button that adds an entrypoint on click.
 vi.mock("@/components/traefik/entrypoint-select", () => ({
   EntrypointSelect: ({
