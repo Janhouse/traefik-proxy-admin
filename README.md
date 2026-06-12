@@ -40,6 +40,62 @@ Can be used standalone but built in mind with Headscale and other VPN to expose 
                         └─────────────────┘
 ```
 
+## Deployment Modes
+
+There are two ways to run this panel:
+
+- **Externally-managed Traefik (default)** — you run and configure Traefik
+  yourself; the panel only supplies the *dynamic* configuration via Traefik's
+  HTTP provider. Everything below in [Quick Start](#quick-start) and
+  [Traefik Configuration](#traefik-configuration) describes this mode. It is
+  the most flexible and powerful option.
+- **Fully-managed Traefik** — a one-command docker compose bundle where the
+  panel also owns Traefik's *static* configuration (entrypoints, ACME
+  certificate resolvers) and Traefik restarts itself when you change them.
+  See [Fully-Managed Traefik Bundle](#fully-managed-traefik-bundle).
+
+## Fully-Managed Traefik Bundle
+
+The bundle (`docker-compose.managed.yml`) starts PostgreSQL, the admin panel
+and Traefik together with sane defaults: `web` (:80, redirecting to https),
+`websecure` (:443, default TLS) and a `letsencrypt` TLS-challenge resolver.
+
+```bash
+cp docker/managed/.env.example .env
+# set POSTGRES_PASSWORD and ADMIN_PANEL_AUTH (htpasswd entry; see the file)
+docker compose -f docker-compose.managed.yml up -d
+```
+
+How it works:
+
+- The panel serves Traefik's `traefik.yml` at `/api/traefik/static-config`.
+  A small wrapper script inside the Traefik container fetches it on boot,
+  polls it every 30 seconds, and **restarts Traefik automatically** when it
+  changes (static config cannot be hot-reloaded). The config page shows
+  whether Traefik has picked up the latest config yet.
+- Entrypoints and certificate resolvers are edited in the **Managed Traefik**
+  section on the config page. DNS-challenge resolvers additionally need their
+  provider credentials as env vars on the `traefik` service in the compose
+  file (e.g. `CF_DNS_API_TOKEN` for Cloudflare) — credentials are never
+  stored in the database.
+- **Security model**: only ports 80/443 are published. The panel (3000) and
+  the Traefik API (8080) stay on the internal compose network; the panel is
+  reachable only through an auto-generated Traefik route on your
+  *Admin Panel Domain*, protected by HTTP basic auth from `ADMIN_PANEL_AUTH`.
+
+First-time setup:
+
+1. `docker compose -f docker-compose.managed.yml up -d` (Traefik starts with
+   built-in defaults).
+2. Point a DNS record (e.g. `admin.example.com`) at the host, then from the
+   host itself open the panel once via
+   `docker compose -f docker-compose.managed.yml exec traefik-configurator wget -qO- http://localhost:3000/api/health`
+   to confirm it is healthy.
+3. On the **Configuration** page set the *Admin Panel Domain* to that DNS
+   name and set your ACME email in the **Managed Traefik** section. Traefik
+   restarts within ~30 seconds and the panel becomes available at
+   `https://admin.example.com` behind the basic-auth prompt.
+
 ## Quick Start
 
 ### 1. Clone and Install Dependencies

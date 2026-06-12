@@ -1,0 +1,71 @@
+# Fully-managed Traefik bundle: one command brings up Traefik + the admin
+# panel + PostgreSQL, with the panel owning BOTH Traefik configs — dynamic
+# (HTTP provider, polled every 5s) and static (traefik.yml served by the
+# panel; the wrapper script restarts Traefik when it changes).
+#
+#   cp docker/managed/.env.example .env   # set passwords + ADMIN_PANEL_AUTH
+#   docker compose -f docker-compose.managed.yml up -d
+#
+# Security model: only Traefik's :80/:443 are published. The panel (3000)
+# and the Traefik API (8080) stay on the internal network; the panel is
+# reached through Traefik's auto-generated admin route, protected by
+# basicAuth from ADMIN_PANEL_AUTH.
+name: traefik-managed
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-admin}"]
+      start_period: 2s
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-traefik_share}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  traefik-configurator:
+    image: ${CONFIGURATOR_IMAGE:-ghcr.io/janhouse/traefik-proxy-admin:latest}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    restart: unless-stopped
+    # No ports: only reachable on this network and through Traefik's
+    # auto-generated admin route (Host(adminPanelDomain) + basicAuth).
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-traefik_share}
+      TRAEFIK_MANAGED: "true"
+      TRAEFIK_API_URL: http://traefik:8080
+      PANEL_INTERNAL_URL: http://traefik-configurator:3000
+      ADMIN_PANEL_AUTH: ${ADMIN_PANEL_AUTH:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  traefik:
+    image: ${TRAEFIK_IMAGE:-traefik:v3.7}
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/traefik-wrapper.sh"]
+    ports:
+      - "80:80"
+      - "443:443"
+      # 8080 (API/dashboard) deliberately NOT published — internal only.
+    volumes:
+      - ./docker/managed/traefik-wrapper.sh:/usr/local/bin/traefik-wrapper.sh:ro
+      - traefik_data:/data # acme-<resolver>.json certificate storage
+    environment:
+      PANEL_URL: http://traefik-configurator:3000
+      # dnsChallenge resolvers need their provider credentials here, e.g.:
+      # CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
+    depends_on:
+      traefik-configurator:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  traefik_data:
