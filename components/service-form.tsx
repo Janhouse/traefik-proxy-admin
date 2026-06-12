@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
+import { Section, FieldCol } from "@/components/form-section";
 import { DurationSelect } from "@/components/duration-select";
 import { MiddlewareSelect } from "@/components/traefik/middleware-select";
 import { RouteRuleEditor } from "@/components/traefik/route-rule-editor";
@@ -303,47 +304,3 @@ export function ServiceForm({
   );
 }
 
-/* ── layout helpers ───────────────────────────────────────────────────────── */
-
-function Section({
-  n,
-  title,
-  desc,
-  children,
-}: {
-  n: number;
-  title: string;
-  desc: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mt-7 first:mt-0">
-      <div className="sec-title">
-        <span className="step-num">{n}</span>
-        {title}
-        <span className="ln" />
-      </div>
-      <p className="fs-desc">{desc}</p>
-      <div className="rounded-[var(--radius-lg)] border bg-card p-5 shadow-[var(--shadow-md)] sm:p-[22px]">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function FieldCol({
-  label,
-  children,
-  full,
-}: {
-  label: string;
-  children: React.ReactNode;
-  full?: boolean;
-}) {
-  return (
-    <div className={`flex flex-col gap-1.5 ${full ? "md:col-span-2" : ""}`}>
-      <Label>{label}</Label>
-      {children}
-    </div>
-  );
-}

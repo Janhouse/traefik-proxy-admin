@@ -75,6 +75,13 @@ describe("ConfigForm middlewares", () => {
       defaultEntrypoints: ["websecure"],
     });
   });
+
+  it("dropped the preview card and keeps the Domains page link", () => {
+    render(<ConfigForm config={baseConfig} onConfigChange={vi.fn()} />);
+    expect(screen.queryByText(/Configuration Preview/)).toBeNull();
+    const link = screen.getByText("Domains page") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/domains");
+  });
 });
 
 describe("useConfig", () => {
