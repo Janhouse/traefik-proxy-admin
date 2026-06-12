@@ -185,6 +185,27 @@ export function resolveServiceEntrypoints(service: Service): string[] {
   return service.entrypoint ? [service.entrypoint] : [];
 }
 
+/** Global default entrypoints, tolerating the legacy single-value config. */
+function globalDefaultEntrypoints(globalConfig: GlobalTraefikConfig): string[] {
+  if (globalConfig.defaultEntrypoints?.length) return globalConfig.defaultEntrypoints;
+  return globalConfig.defaultEntrypoint ? [globalConfig.defaultEntrypoint] : [];
+}
+
+/**
+ * Default entrypoints suitable for cert-trigger routers: those routers always
+ * carry `tls`, so binding a plain-HTTP default (e.g. `web`) would serve TLS
+ * on :80. Empty result means "omit entryPoints" (Traefik then binds all, and
+ * a tls router simply never matches plain-HTTP entrypoints).
+ */
+function tlsDefaultEntrypoints(
+  globalConfig: GlobalTraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
+): string[] {
+  return globalDefaultEntrypoints(globalConfig).filter((ep) =>
+    isTlsEntrypoint(ep, epTlsInfo.get(ep))
+  );
+}
+
 /**
  * All router names this service currently emits into Traefik. With multiple
  * entrypoints, one router per entrypoint (`router-<id>-<ep>`); the un-suffixed
@@ -479,9 +500,7 @@ async function createTraefikService(
   const epList = resolveServiceEntrypoints(service);
   const entryPoints = epList.length
     ? epList
-    : globalConfig.defaultEntrypoint
-      ? [globalConfig.defaultEntrypoint]
-      : [];
+    : globalDefaultEntrypoints(globalConfig);
 
   const emittedTls = emitServiceRouters(
     config,
@@ -597,7 +616,8 @@ function determineTlsConfig(service: Service, domain: Domain, hostnames: string[
 function createWildcardCertTrigger(
   domain: Domain,
   globalConfig: GlobalTraefikConfig,
-  config: TraefikConfig
+  config: TraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
 ): void {
   // Create unique names for this domain
   const domainSafe = domain.domain.replace(/\./g, '-');
@@ -637,11 +657,12 @@ function createWildcardCertTrigger(
   // Create router for the base domain to trigger wildcard cert generation.
   // Path-scoped so it can never steal real traffic from a service (e.g. an
   // apex service) whose rule matches the same Host().
+  const wildcardEntryPoints = tlsDefaultEntrypoints(globalConfig, epTlsInfo);
   const wildcardRouter: TraefikRouter = {
     rule: `(Host(\`${domain.domain}\`)) && Path(\`${CERT_TRIGGER_PATH}\`)`,
     service: wildcardServiceName,
     ...(wildcardMiddlewares.length > 0 && { middlewares: wildcardMiddlewares }),
-    ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+    ...(wildcardEntryPoints.length > 0 && { entryPoints: wildcardEntryPoints }),
     tls: {
       certResolver: domain.certResolver,
       domains: [
@@ -661,10 +682,12 @@ function createWildcardCertTrigger(
 function createCertificateConfigTriggers(
   domain: Domain,
   globalConfig: GlobalTraefikConfig,
-  config: TraefikConfig
+  config: TraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
 ): void {
   const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
   const certRouterNames = certTriggerRouterNames(domain);
+  const triggerEntryPoints = tlsDefaultEntrypoints(globalConfig, epTlsInfo);
 
   for (const [index, certConfig] of certificateConfigs.entries()) {
     // Create unique names for this certificate config
@@ -713,7 +736,7 @@ function createCertificateConfigTriggers(
       rule: `(${hostRules}) && Path(\`${CERT_TRIGGER_PATH}\`)`,
       service: certServiceName,
       ...(certMiddlewares.length > 0 && { middlewares: certMiddlewares }),
-      ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+      ...(triggerEntryPoints.length > 0 && { entryPoints: triggerEntryPoints }),
       tls: {
         certResolver: certConfig.certResolver,
         domains: [
@@ -823,13 +846,13 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     // Add wildcard certificate triggers for domains that use wildcard
     // certificates — unless an enabled service already requests that wildcard.
     if (domain.useWildcardCert && !wildcardSatisfiedDomains.has(domain.id)) {
-      createWildcardCertTrigger(domain, globalConfig, config);
+      createWildcardCertTrigger(domain, globalConfig, config, epTlsInfo);
     }
 
     // Add specific certificate configuration triggers
     const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
     if (certificateConfigs.length > 0) {
-      createCertificateConfigTriggers(domain, globalConfig, config);
+      createCertificateConfigTriggers(domain, globalConfig, config, epTlsInfo);
     }
   }
 

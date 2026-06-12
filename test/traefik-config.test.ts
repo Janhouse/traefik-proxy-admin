@@ -13,6 +13,7 @@ const h = vi.hoisted(() => {
       globalMiddlewares: [] as string[],
       adminPanelDomain: "admin.local:3000",
       defaultEntrypoint: undefined as string | undefined,
+      defaultEntrypoints: undefined as string[] | undefined,
     },
     securityConfigs: [] as unknown[],
     basicAuthUsers: [] as unknown[],
@@ -127,6 +128,7 @@ beforeEach(() => {
     globalMiddlewares: [],
     adminPanelDomain: "admin.local:3000",
     defaultEntrypoint: undefined,
+    defaultEntrypoints: undefined,
   };
   h.state.entrypoints = [
     { name: "web", address: ":80" },
@@ -430,6 +432,59 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     const config2 = await generateTraefikConfig();
     const router2 = config2.http.routers["router-app-example-com"];
     expect("entryPoints" in router2).toBe(false);
+  });
+});
+
+describe("generateTraefikConfig — multi default entrypoints", () => {
+  it("fans a no-entrypoint service out across all global defaults, TLS only on TLS ones", async () => {
+    h.state.joinRows = [
+      { service: mkService({ entrypoints: null, entrypoint: null }), domain: mkDomain() },
+    ];
+    h.state.globalConfig.defaultEntrypoints = ["web", "websecure"];
+
+    const config = await generateTraefikConfig();
+    const web = config.http.routers["router-app-example-com-web"];
+    const secure = config.http.routers["router-app-example-com-websecure"];
+    expect(web.entryPoints).toEqual(["web"]);
+    expect(web.tls).toBeUndefined();
+    expect(secure.entryPoints).toEqual(["websecure"]);
+    expect(secure.tls).toBeDefined();
+    // multi-entrypoint naming contract: no un-suffixed base router
+    expect(config.http.routers["router-app-example-com"]).toBeUndefined();
+  });
+
+  it("prefers defaultEntrypoints over the legacy single value", async () => {
+    h.state.joinRows = [
+      { service: mkService({ entrypoints: null, entrypoint: null }), domain: mkDomain() },
+    ];
+    h.state.globalConfig.defaultEntrypoint = "web";
+    h.state.globalConfig.defaultEntrypoints = ["websecure"];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["router-app-example-com"];
+    expect(router.entryPoints).toEqual(["websecure"]);
+  });
+
+  it("binds cert-trigger routers to only the TLS subset of the defaults", async () => {
+    const domain = mkDomain(); // useWildcardCert: true, no services
+    h.state.allDomains = [domain];
+    h.state.globalConfig.defaultEntrypoints = ["web", "websecure"];
+
+    const config = await generateTraefikConfig();
+    const trigger = config.http.routers[wildcardCertRouterName(domain)];
+    expect(trigger).toBeDefined();
+    // "web" is plain HTTP — a tls router bound to it would serve TLS on :80
+    expect(trigger.entryPoints).toEqual(["websecure"]);
+  });
+
+  it("omits trigger entryPoints entirely when no default is TLS", async () => {
+    const domain = mkDomain();
+    h.state.allDomains = [domain];
+    h.state.globalConfig.defaultEntrypoints = ["web"];
+
+    const config = await generateTraefikConfig();
+    const trigger = config.http.routers[wildcardCertRouterName(domain)];
+    expect("entryPoints" in trigger).toBe(false);
   });
 });
 

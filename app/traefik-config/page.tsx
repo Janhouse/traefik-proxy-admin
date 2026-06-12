@@ -12,7 +12,7 @@ interface GlobalConfig {
   certResolver: string;
   globalMiddlewares: string[];
   adminPanelDomain: string;
-  defaultEntrypoint?: string;
+  defaultEntrypoints?: string[];
 }
 
 function CodeBlock({
@@ -256,10 +256,12 @@ networks:
                 </div>
                 <div>
                   <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Default entrypoint
+                    Default entrypoints
                   </span>
                   <p className="mono mt-0.5 text-foreground">
-                    {config.defaultEntrypoint || (
+                    {config.defaultEntrypoints?.length ? (
+                      config.defaultEntrypoints.join(", ")
+                    ) : (
                       <span className="text-[var(--meta)]">Not set</span>
                     )}
                   </p>

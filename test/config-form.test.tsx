@@ -24,13 +24,28 @@ vi.mock("@/components/traefik/middleware-select", () => ({
   ),
 }));
 
+// Stand-in for EntrypointSelect: a button that adds an entrypoint on click.
+vi.mock("@/components/traefik/entrypoint-select", () => ({
+  EntrypointSelect: ({
+    value,
+    onChange,
+  }: {
+    value: string[];
+    onChange: (eps: string[]) => void;
+  }) => (
+    <button type="button" onClick={() => onChange([...value, "websecure"])}>
+      ep-select ({value.join(",")})
+    </button>
+  ),
+}));
+
 import { ConfigForm } from "@/components/config-form";
 import { useConfig, type GlobalConfig } from "@/lib/hooks/use-config";
 
 const baseConfig: GlobalConfig = {
   globalMiddlewares: ["secure-headers"],
   adminPanelDomain: "localhost:3000",
-  defaultEntrypoint: "",
+  defaultEntrypoints: [],
   defaultEnableDurationMinutes: 720,
 };
 
@@ -46,6 +61,18 @@ describe("ConfigForm middlewares", () => {
     expect(onConfigChange).toHaveBeenCalledWith({
       ...baseConfig,
       globalMiddlewares: ["secure-headers", "compress"],
+    });
+  });
+
+  it("routes entrypoint selector changes into config.defaultEntrypoints", async () => {
+    const user = userEvent.setup();
+    const onConfigChange = vi.fn();
+    render(<ConfigForm config={baseConfig} onConfigChange={onConfigChange} />);
+
+    await user.click(screen.getByText(/ep-select/));
+    expect(onConfigChange).toHaveBeenCalledWith({
+      ...baseConfig,
+      defaultEntrypoints: ["websecure"],
     });
   });
 });

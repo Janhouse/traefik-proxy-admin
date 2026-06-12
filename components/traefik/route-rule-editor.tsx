@@ -8,8 +8,6 @@ import {
   ChevronDown,
   Check,
   Globe,
-  Lock,
-  Network,
   Copy,
   AlertTriangle,
   GripVertical,
@@ -33,7 +31,8 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useTraefikEntrypoints, useRouteConflicts } from "@/hooks/use-traefik";
+import { useRouteConflicts } from "@/hooks/use-traefik";
+import { EntrypointSelect } from "@/components/traefik/entrypoint-select";
 import { toast } from "@/components/toaster";
 import {
   MATCHER_TYPES,
@@ -155,18 +154,6 @@ export function legacyHostTree(initial: {
   return [host, ...initial.matchRules];
 }
 
-function epIcon(name: string) {
-  const n = name.toLowerCase();
-  if (n.includes("secure") || n.includes("443")) return <Lock />;
-  if (n.includes("web") || n.includes("http") || n.includes("80")) return <Globe />;
-  return <Network />;
-}
-
-/** Traefik's dedicated API/dashboard entrypoint (api.insecure). Per the
- * Traefik docs it should never carry application traffic, so the picker
- * hides it unless the service already saved it. */
-const TRAEFIK_API_ENTRYPOINT = "traefik";
-
 function newMatcher(type: MatchType, defaultDomainId: string): MatchRule {
   if (type === "Host") {
     // domain-backed Host row: default domain preselected, empty subdomain
@@ -210,7 +197,6 @@ export function RouteRuleEditor({
   const convertedCustom =
     initial.hostnameMode === "custom" && !treeHasHost(initial.matchRules);
 
-  const { entrypoints } = useTraefikEntrypoints();
   // Poll: Traefik re-reads our config every ~10s, so a stale-router conflict
   // (e.g. right after changing entrypoints) clears itself within a cycle.
   const { conflicts } = useRouteConflicts(15_000);
@@ -296,18 +282,6 @@ export function RouteRuleEditor({
   // the rule is meaningful
   const showRule = !!rule && !hostMissing;
 
-  const epList = useMemo(() => entrypoints?.entrypoints || [], [entrypoints]);
-  const savedTraefikEp = initial.entrypoints.includes(TRAEFIK_API_ENTRYPOINT);
-  // include any saved entrypoint not reported by the API; hide the dedicated
-  // Traefik API entrypoint unless this service already saved it
-  const epNames = useMemo(() => {
-    const names = epList
-      .map((e) => e.name)
-      .filter((n) => n !== TRAEFIK_API_ENTRYPOINT || savedTraefikEp);
-    for (const e of eps) if (!names.includes(e)) names.push(e);
-    return names;
-  }, [epList, eps, savedTraefikEp]);
-
   // conflict: same primary host + overlapping entrypoint on another router
   const conflict = useMemo(() => {
     if (!conflicts?.reachable || !primaryHost) return null;
@@ -354,11 +328,6 @@ export function RouteRuleEditor({
         children: [],
       });
     });
-  const toggleEp = (name: string) =>
-    setEps((cur) =>
-      cur.includes(name) ? cur.filter((e) => e !== name) : [...cur, name]
-    );
-
   // ── drag & drop ───────────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -555,52 +524,20 @@ export function RouteRuleEditor({
       {/* entrypoints */}
       <div className="flex flex-col gap-1.5">
         <label className="text-[13px] font-semibold">Entrypoints</label>
-        <div className="ep-grid">
-          {epNames.length === 0 && (
-            <span className="text-[12px] text-[var(--meta)]">
-              No entrypoints discovered — set TRAEFIK_API_URL.
-            </span>
-          )}
-          {epNames.map((name) => {
-            const info = epList.find((e) => e.name === name);
-            const on = eps.includes(name);
-            return (
-              <button
-                type="button"
-                key={name}
-                className={`ep-card ${on ? "on" : ""}`}
-                aria-pressed={on}
-                disabled={disabled}
-                onClick={() => toggleEp(name)}
-              >
-                <span className="ep-ic [&_svg]:h-[15px] [&_svg]:w-[15px]">
-                  {epIcon(name)}
-                </span>
-                <span className="ep-meta">
-                  <span className="ep-nm">
-                    {name}
-                    {name === TRAEFIK_API_ENTRYPOINT && (
-                      <span
-                        className="ep-api-badge"
-                        title="Traefik's dedicated API/dashboard entrypoint — it should not carry application traffic. Deselect it to remove it from this service."
-                      >
-                        API
-                      </span>
-                    )}
-                  </span>
-                  <span className="ep-sub">{info?.address || "—"}</span>
-                </span>
-                <Check className="ep-ck" />
-              </button>
-            );
-          })}
-        </div>
-        <span className="text-[12px] text-[var(--meta)]">
-          One router is generated per selected entrypoint — same middlewares on
-          each, TLS only on TLS entrypoints. Empty = the global default. The
-          dedicated <span className="mono">traefik</span> API entrypoint is
-          hidden unless this service already uses it.
-        </span>
+        <EntrypointSelect
+          value={eps}
+          onChange={setEps}
+          disabled={disabled}
+          helpText={
+            <>
+              One router is generated per selected entrypoint — same
+              middlewares on each, TLS only on TLS entrypoints. Empty = the
+              global default. The dedicated{" "}
+              <span className="mono">traefik</span> API entrypoint is hidden
+              unless this service already uses it.
+            </>
+          }
+        />
       </div>
     </div>
   );

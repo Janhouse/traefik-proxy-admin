@@ -6,24 +6,33 @@ import { toast } from "@/components/toaster";
 export interface GlobalConfig {
   globalMiddlewares: string[];
   adminPanelDomain: string;
-  defaultEntrypoint?: string;
+  defaultEntrypoints: string[];
   defaultEnableDurationMinutes?: number | null;
 }
 
 const defaultConfig: GlobalConfig = {
   globalMiddlewares: [],
   adminPanelDomain: "localhost:3000",
+  defaultEntrypoints: [],
   defaultEnableDurationMinutes: 720,
 };
 
 /** Normalize an API payload so every field is a stable controlled value. */
-function normalizeConfig(data: Partial<GlobalConfig>): GlobalConfig {
+function normalizeConfig(
+  data: Partial<GlobalConfig> & { defaultEntrypoint?: string }
+): GlobalConfig {
   return {
     globalMiddlewares: Array.isArray(data.globalMiddlewares)
       ? data.globalMiddlewares
       : [],
     adminPanelDomain: data.adminPanelDomain || "localhost:3000",
-    defaultEntrypoint: data.defaultEntrypoint || "",
+    // The server migrates the legacy single `defaultEntrypoint` already;
+    // mapping it here too keeps the form stable against stale payloads.
+    defaultEntrypoints: Array.isArray(data.defaultEntrypoints)
+      ? data.defaultEntrypoints
+      : data.defaultEntrypoint
+        ? [data.defaultEntrypoint]
+        : [],
     defaultEnableDurationMinutes: data.defaultEnableDurationMinutes ?? 720,
   };
 }

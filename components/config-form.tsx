@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EntrypointSelect } from "@/components/traefik/entrypoint-select";
 import { MiddlewareSelect } from "@/components/traefik/middleware-select";
 import { DURATION_PRESETS } from "@/lib/duration-presets";
 import { GlobalConfig } from "@/lib/hooks/use-config";
@@ -39,18 +40,14 @@ export function ConfigForm({ config, onConfigChange }: ConfigFormProps) {
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="defaultEntrypoint">Default Entrypoint</Label>
-              <Input
-                id="defaultEntrypoint"
-                placeholder="websecure (optional)"
-                value={config.defaultEntrypoint || ""}
-                onChange={(e) =>
-                  onConfigChange({ ...config, defaultEntrypoint: e.target.value })
+              <Label>Default Entrypoints</Label>
+              <EntrypointSelect
+                value={config.defaultEntrypoints}
+                onChange={(eps) =>
+                  onConfigChange({ ...config, defaultEntrypoints: eps })
                 }
+                helpText="Used when a service has no entrypoints selected; cert-trigger routers bind to the TLS ones."
               />
-              <p className="text-xs text-muted-foreground">
-                Default Traefik entrypoint for all services (optional)
-              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="defaultDuration">Default Service Duration</Label>
@@ -143,7 +140,7 @@ export function ConfigForm({ config, onConfigChange }: ConfigFormProps) {
             </div>
             <pre>{`Example service configuration:
 Domain: myservice.[configured-domain]
-Certificate: [per-domain cert resolver]${config.defaultEntrypoint ? `\nEntrypoint: ${config.defaultEntrypoint}` : ''}
+Certificate: [per-domain cert resolver]${config.defaultEntrypoints.length ? `\nEntrypoints: ${config.defaultEntrypoints.join(', ')}` : ''}
 Middlewares: [${config.globalMiddlewares.join(', ')}] + auth + service-specific
 
 Note: Domains and certificates are now configured individually in the Domains page.
