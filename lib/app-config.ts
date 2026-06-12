@@ -97,7 +97,7 @@ async function readConfigValue<T>(key: string): Promise<T | null> {
 
 /* ── Managed-Traefik static config store ──────────────────────────────────── */
 
-export const MANAGED_STATIC_CONFIG_KEY = "managed_static_config";
+const MANAGED_STATIC_CONFIG_KEY = "managed_static_config";
 const MANAGED_STATIC_STATE_KEY = "managed_static_state";
 
 export interface ManagedStaticState {
