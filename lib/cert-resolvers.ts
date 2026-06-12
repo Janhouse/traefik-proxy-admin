@@ -4,6 +4,8 @@ import {
   getHttpRouters,
   isTraefikApiConfigured,
 } from "@/lib/traefik-api";
+import { getManagedStaticConfig } from "@/lib/app-config";
+import { isManagedMode } from "@/lib/managed-traefik";
 import type {
   CertResolverInfo,
   CertResolversResponse,
@@ -14,6 +16,7 @@ import type {
  *
  * Traefik has NO API endpoint for certificate resolvers (they are
  * static-config-only), so the names are INFERRED from where they appear:
+ *   - the managed static config (managed mode owns the list) → source "managed"
  *   - routers referencing `tls.certResolver`        → source "router"
  *   - entrypoints with a default `http.tls.certResolver` → source "entrypoint"
  * Inference can't see resolvers nothing references yet, which is why the UI
@@ -35,6 +38,19 @@ export async function getCertResolvers(): Promise<CertResolversResponse> {
   const configured = isTraefikApiConfigured();
   // First-in wins on duplicate names (insertion order = source precedence).
   const found = new Map<string, CertResolverInfo>();
+
+  // Managed names first — available even when Traefik itself is unreachable.
+  if (isManagedMode()) {
+    try {
+      const managed = await getManagedStaticConfig();
+      for (const r of managed.certResolvers) {
+        if (r.name && !found.has(r.name))
+          found.set(r.name, { name: r.name, source: "managed" });
+      }
+    } catch {
+      /* store unavailable — fall through to API inference */
+    }
+  }
 
   if (!configured) {
     return { configured, reachable: false, resolvers: sorted([...found.values()]) };

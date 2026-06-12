@@ -1,6 +1,7 @@
 /* Cert-resolver inference: Traefik has no resolver API, so names come from
- * router tls.certResolver and entrypoint http.tls.certResolver blocks. */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+ * the managed static config (managed mode), router tls.certResolver and
+ * entrypoint http.tls.certResolver blocks. */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   state: {
@@ -8,6 +9,7 @@ const h = vi.hoisted(() => ({
     routers: [] as unknown[],
     entrypoints: [] as unknown[],
     fail: false,
+    managedResolvers: [] as Array<{ name: string }>,
   },
 }));
 
@@ -23,6 +25,13 @@ vi.mock("@/lib/traefik-api", () => ({
   }),
 }));
 
+vi.mock("@/lib/app-config", () => ({
+  getManagedStaticConfig: vi.fn(async () => ({
+    entrypoints: [],
+    certResolvers: h.state.managedResolvers,
+  })),
+}));
+
 import { getCertResolvers } from "@/lib/cert-resolvers";
 
 beforeEach(() => {
@@ -30,7 +39,10 @@ beforeEach(() => {
   h.state.routers = [];
   h.state.entrypoints = [];
   h.state.fail = false;
+  h.state.managedResolvers = [];
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("getCertResolvers", () => {
   it("collects distinct resolvers from routers and entrypoints, sorted", async () => {
@@ -78,6 +90,31 @@ describe("getCertResolvers", () => {
     const res = await getCertResolvers();
     expect(res.configured).toBe(true);
     expect(res.reachable).toBe(false);
+    expect(res.resolvers).toEqual([]);
+  });
+
+  it("managed mode: managed names come first and survive an unreachable Traefik", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    h.state.managedResolvers = [{ name: "letsencrypt" }];
+    h.state.fail = true;
+
+    const res = await getCertResolvers();
+    expect(res.reachable).toBe(false);
+    expect(res.resolvers).toEqual([{ name: "letsencrypt", source: "managed" }]);
+  });
+
+  it("managed source outranks router/entrypoint for the same name", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    h.state.managedResolvers = [{ name: "letsencrypt" }];
+    h.state.routers = [{ name: "a@http", tls: { certResolver: "letsencrypt" } }];
+
+    const res = await getCertResolvers();
+    expect(res.resolvers).toEqual([{ name: "letsencrypt", source: "managed" }]);
+  });
+
+  it("outside managed mode the store is not consulted", async () => {
+    h.state.managedResolvers = [{ name: "ghost" }];
+    const res = await getCertResolvers();
     expect(res.resolvers).toEqual([]);
   });
 });
