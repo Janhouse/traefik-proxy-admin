@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   BackendHealthResponse,
   CertificatesResponse,
+  CertResolversResponse,
   EntrypointsResponse,
   MetricsResponse,
   MiddlewaresResponse,
@@ -57,6 +58,13 @@ export function useTraefikEntrypoints() {
     "/api/traefik/entrypoints"
   );
   return { entrypoints: data, loading, refresh };
+}
+
+export function useTraefikCertResolvers() {
+  const { data, loading, refresh } = useFetched<CertResolversResponse>(
+    "/api/traefik/cert-resolvers"
+  );
+  return { certResolvers: data, loading, refresh };
 }
 
 export function useTraefikRuntime(pollMs = 0) {

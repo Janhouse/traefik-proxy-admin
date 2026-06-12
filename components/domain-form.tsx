@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Save, X, Plus, Minus } from "lucide-react";
+import { CertResolverSelect } from "@/components/traefik/cert-resolver-select";
 import type {
   DomainResponse,
   CreateDomainRequest,
@@ -191,11 +192,10 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
 
             <div className="space-y-1.5">
               <Label htmlFor="certResolver">Certificate Resolver</Label>
-              <Input
+              <CertResolverSelect
                 id="certResolver"
                 value={formData.certResolver}
-                onChange={(e) => handleChange("certResolver", e.target.value)}
-                placeholder="e.g., letsencrypt"
+                onChange={(name) => handleChange("certResolver", name)}
                 required
               />
             </div>
@@ -295,11 +295,10 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
 
                       <div className="space-y-1.5">
                         <Label htmlFor={`cert-resolver-${index}`}>Certificate Resolver</Label>
-                        <Input
+                        <CertResolverSelect
                           id={`cert-resolver-${index}`}
                           value={config.certResolver}
-                          onChange={(e) => updateCertificateConfig(index, 'certResolver', e.target.value)}
-                          placeholder="e.g., letsencrypt"
+                          onChange={(name) => updateCertificateConfig(index, 'certResolver', name)}
                           disabled={saving}
                         />
                       </div>

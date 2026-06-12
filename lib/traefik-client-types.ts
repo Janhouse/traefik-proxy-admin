@@ -41,6 +41,21 @@ export interface MiddlewaresResponse {
   middlewares: TraefikMiddlewareInfo[];
 }
 
+/* ── Certificate resolvers (inferred — Traefik has no resolver API) ───────── */
+
+export interface CertResolverInfo {
+  name: string;
+  /** Where the name was seen: the managed static config, a router's
+   * tls.certResolver, or an entrypoint's default http.tls.certResolver. */
+  source: "managed" | "router" | "entrypoint";
+}
+
+export interface CertResolversResponse {
+  configured: boolean;
+  reachable: boolean;
+  resolvers: CertResolverInfo[];
+}
+
 /* ── Runtime explorer ─────────────────────────────────────────────────────── */
 
 export interface RuntimeRouter {
