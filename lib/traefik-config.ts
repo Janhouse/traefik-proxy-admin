@@ -15,7 +15,17 @@ import {
   resolveEntrypointTlsInfo,
   type EntrypointTlsInfo,
 } from "./entrypoint-tls";
-import { getGlobalConfig, type GlobalTraefikConfig } from "./app-config";
+import {
+  getGlobalConfig,
+  getManagedStaticConfig,
+  type GlobalTraefikConfig,
+} from "./app-config";
+import {
+  isManagedMode,
+  panelInternalUrl,
+  parseAdminPanelAuthUsers,
+} from "./managed-traefik";
+import type { ManagedStaticConfig } from "./managed-traefik-types";
 import { BasicAuthService } from "./services/basic-auth.service";
 import { ServiceSecurityService } from "./services/service-security.service";
 import { TRAEFIK_SESSION_COOKIE } from "./constants";
@@ -331,7 +341,9 @@ async function buildServiceMiddlewares(
         const authMiddlewareName = `auth-${securityConfig.securityType}-${serviceIdentifier}`;
         config.http.middlewares![authMiddlewareName] = {
           forwardAuth: {
-            address: `http://${globalConfig.adminPanelDomain}/api/auth/verify?serviceId=${service.id}&configId=${securityConfig.id}`,
+            // Traefik calls this server-side; in the managed bundle the
+            // internal container URL skips the public route (and its basicAuth)
+            address: `${panelInternalUrl(globalConfig.adminPanelDomain)}/api/auth/verify?serviceId=${service.id}&configId=${securityConfig.id}`,
             trustForwardHeader: true,
             addAuthCookiesToResponse: [TRAEFIK_SESSION_COOKIE],
             authRequestHeaders: ["Accept", "Cookie", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Uri"],
@@ -637,7 +649,7 @@ function createWildcardCertTrigger(
     loadBalancer: {
       servers: [
         {
-          url: `http://${globalConfig.adminPanelDomain}`,
+          url: panelInternalUrl(globalConfig.adminPanelDomain),
         },
       ],
     },
@@ -708,7 +720,7 @@ function createCertificateConfigTriggers(
       loadBalancer: {
         servers: [
           {
-            url: `http://${globalConfig.adminPanelDomain}`,
+            url: panelInternalUrl(globalConfig.adminPanelDomain),
           },
         ],
       },
@@ -749,6 +761,68 @@ function createCertificateConfigTriggers(
     };
     config.http.routers[certRouterName] = certRouter;
   }
+}
+
+/**
+ * Managed mode only: expose the admin panel itself through Traefik. The
+ * router binds the TLS-enabled managed entrypoints and carries a basicAuth
+ * middleware built from ADMIN_PANEL_AUTH (htpasswd entries) — the bundle
+ * publishes no panel port, so this route is the only way in. Forward-auth is
+ * unaffected: Traefik calls the verify endpoint directly at the internal
+ * panel URL, never through this router.
+ */
+function createAdminPanelRoute(
+  globalConfig: GlobalTraefikConfig,
+  managedCfg: ManagedStaticConfig,
+  allDomains: Domain[],
+  config: TraefikConfig
+): void {
+  const host = globalConfig.adminPanelDomain.replace(/:\d+$/, "").trim();
+  // A localhost/empty admin domain can't be routed publicly — nothing to emit.
+  if (!host || host === "localhost" || host.endsWith(".localhost")) return;
+  // Identifier collision with a user service (host slug "admin-panel") —
+  // leave the user's router alone and skip ours.
+  if (config.http.routers["admin-panel"]) {
+    console.error("Router name admin-panel is taken; skipping the managed panel route");
+    return;
+  }
+
+  config.http.services["admin-panel"] = {
+    loadBalancer: {
+      servers: [{ url: panelInternalUrl(globalConfig.adminPanelDomain) }],
+    },
+  };
+
+  const middlewares: string[] = [];
+  const users = parseAdminPanelAuthUsers(process.env.ADMIN_PANEL_AUTH);
+  if (users.length > 0) {
+    config.http.middlewares!["admin-panel-auth"] = { basicAuth: { users } };
+    middlewares.push("admin-panel-auth");
+  }
+
+  // Cert handling mirrors regular services: a managed domain match supplies
+  // the resolver (and wildcard block); otherwise the first managed resolver.
+  const matched = allDomains.find(
+    (d) => host === d.domain || host.endsWith("." + d.domain)
+  );
+  const certResolver = matched?.certResolver ?? managedCfg.certResolvers[0]?.name;
+  const tls: TraefikRouter["tls"] = {};
+  if (certResolver) tls.certResolver = certResolver;
+  if (matched?.useWildcardCert) {
+    tls.domains = [{ main: matched.domain, sans: [`*.${matched.domain}`] }];
+  }
+
+  const tlsEps = managedCfg.entrypoints
+    .filter((e) => e.tls?.enabled)
+    .map((e) => e.name);
+
+  config.http.routers["admin-panel"] = {
+    rule: `Host(\`${host}\`)`,
+    service: "admin-panel",
+    ...(middlewares.length > 0 && { middlewares }),
+    entryPoints: tlsEps.length > 0 ? tlsEps : ["websecure"],
+    tls,
+  };
 }
 
 /**
@@ -854,6 +928,12 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     if (certificateConfigs.length > 0) {
       createCertificateConfigTriggers(domain, globalConfig, config, epTlsInfo);
     }
+  }
+
+  // Managed bundle: the panel itself is only reachable through Traefik.
+  if (isManagedMode()) {
+    const managedCfg = await getManagedStaticConfig();
+    createAdminPanelRoute(globalConfig, managedCfg, allDomains, config);
   }
 
   // Remove middlewares block if it's empty

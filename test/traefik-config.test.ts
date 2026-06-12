@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Domain, Service } from "@/lib/db/schema";
 
 /* ── Mocks ─────────────────────────────────────────────────────────────────── */
@@ -18,6 +18,13 @@ const h = vi.hoisted(() => {
     securityConfigs: [] as unknown[],
     basicAuthUsers: [] as unknown[],
     entrypoints: [] as unknown[],
+    managedConfig: {
+      entrypoints: [
+        { name: "web", port: 80, redirectToEntrypoint: "websecure" },
+        { name: "websecure", port: 443, tls: { enabled: true, certResolver: "letsencrypt" } },
+      ],
+      certResolvers: [{ name: "letsencrypt", email: "", challenge: "tlsChallenge" }],
+    } as unknown,
   };
   return { servicesTable, domainsTable, state };
 });
@@ -45,6 +52,7 @@ vi.mock("@/lib/db", () => {
 
 vi.mock("@/lib/app-config", () => ({
   getGlobalConfig: vi.fn(async () => h.state.globalConfig),
+  getManagedStaticConfig: vi.fn(async () => h.state.managedConfig),
 }));
 
 vi.mock("@/lib/services/service-security.service", () => ({
@@ -135,6 +143,8 @@ beforeEach(() => {
     { name: "websecure", address: ":443", http: { tls: {} } },
   ];
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 /* ── generateServiceIdentifier / serviceRouterNames ────────────────────────── */
 
@@ -485,6 +495,97 @@ describe("generateTraefikConfig — multi default entrypoints", () => {
     const config = await generateTraefikConfig();
     const trigger = config.http.routers[wildcardCertRouterName(domain)];
     expect("entryPoints" in trigger).toBe(false);
+  });
+});
+
+describe("generateTraefikConfig — managed mode integration", () => {
+  const authMw = "auth-shared_link-app-example-com";
+
+  it("keeps legacy output identical when the new envs are unset", async () => {
+    const domain = mkDomain();
+    h.state.joinRows = [{ service: mkService(), domain }];
+    h.state.allDomains = [domain];
+    h.state.securityConfigs = [
+      { id: "sec1sec1-0000", securityType: "shared_link", config: "{}" },
+    ];
+
+    const config = await generateTraefikConfig();
+    const fa = config.http.middlewares![authMw].forwardAuth as { address: string };
+    expect(fa.address).toContain("http://admin.local:3000/api/auth/verify");
+    expect(config.http.routers["admin-panel"]).toBeUndefined();
+    expect(config.http.services["admin-panel"]).toBeUndefined();
+  });
+
+  it("PANEL_INTERNAL_URL rewrites forward-auth and cert-trigger service URLs", async () => {
+    vi.stubEnv("PANEL_INTERNAL_URL", "http://panel:3000");
+    const domain = mkDomain();
+    h.state.joinRows = [{ service: mkService(), domain }];
+    // a service-less second domain still gets its wildcard trigger emitted
+    h.state.allDomains = [
+      domain,
+      mkDomain({ id: "domain-2", domain: "other.net", isDefault: false }),
+    ];
+    h.state.securityConfigs = [
+      { id: "sec1sec1-0000", securityType: "shared_link", config: "{}" },
+    ];
+
+    const config = await generateTraefikConfig();
+    const fa = config.http.middlewares![authMw].forwardAuth as { address: string };
+    expect(fa.address).toContain("http://panel:3000/api/auth/verify");
+    const trigger = config.http.services["wildcard-cert-trigger-other-net"];
+    expect(trigger.loadBalancer.servers[0].url).toBe("http://panel:3000");
+  });
+
+  it("managed mode emits the admin panel route with basicAuth from env", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    vi.stubEnv("ADMIN_PANEL_AUTH", "admin:$apr1$hash");
+    h.state.globalConfig.adminPanelDomain = "admin.example.com";
+    h.state.allDomains = [mkDomain()];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["admin-panel"];
+    expect(router.rule).toBe("Host(`admin.example.com`)");
+    expect(router.entryPoints).toEqual(["websecure"]);
+    expect(router.middlewares).toEqual(["admin-panel-auth"]);
+    // suffix-matched managed domain supplies resolver + wildcard block
+    expect(router.tls).toEqual({
+      certResolver: "letsencrypt",
+      domains: [{ main: "example.com", sans: ["*.example.com"] }],
+    });
+    expect(config.http.middlewares!["admin-panel-auth"]).toEqual({
+      basicAuth: { users: ["admin:$apr1$hash"] },
+    });
+    expect(config.http.services["admin-panel"].loadBalancer.servers[0].url).toBe(
+      "http://admin.example.com"
+    );
+  });
+
+  it("managed mode without ADMIN_PANEL_AUTH emits the route without basicAuth", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    h.state.globalConfig.adminPanelDomain = "admin.example.com";
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["admin-panel"].middlewares).toBeUndefined();
+    expect(config.http.middlewares?.["admin-panel-auth"]).toBeUndefined();
+  });
+
+  it("skips the admin route for localhost admin domains", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    h.state.globalConfig.adminPanelDomain = "localhost:3000";
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["admin-panel"]).toBeUndefined();
+  });
+
+  it("strips the port and falls back to the first managed resolver when no domain matches", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    h.state.globalConfig.adminPanelDomain = "panel.other.net:8443";
+    h.state.allDomains = [mkDomain()]; // example.com — no match
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["admin-panel"];
+    expect(router.rule).toBe("Host(`panel.other.net`)");
+    expect(router.tls).toEqual({ certResolver: "letsencrypt" });
   });
 });
 
