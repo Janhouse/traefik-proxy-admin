@@ -244,9 +244,9 @@
   /* ── Glassy sticky app header ───────────────────────────────────────────── */
   .app-header {
     position: sticky; top: 0; z-index: 50;
-    background: color-mix(in oklab, var(--surface-2) 78%, transparent);
-    backdrop-filter: saturate(140%) blur(14px);
-    -webkit-backdrop-filter: saturate(140%) blur(14px);
+    background: color-mix(in oklab, var(--surface-2) 62%, transparent);
+    backdrop-filter: saturate(150%) blur(20px);
+    -webkit-backdrop-filter: saturate(150%) blur(20px);
     border-bottom: 1px solid var(--border);
   }
   .brand-mark {

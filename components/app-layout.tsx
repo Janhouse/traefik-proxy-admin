@@ -56,7 +56,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <div className="relative">
             {managed && (
               <span
-                className="pointer-events-none absolute -top-2.5 left-6 z-10 -rotate-[7deg] select-none rounded-[3px] border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[var(--grad-brand-soft)] px-1.5 py-[1px] text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-[var(--brand)]"
+                className="pointer-events-none absolute -bottom-2.5 right-0 z-10 rotate-[7deg] select-none rounded-[3px] border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[var(--grad-brand-soft)] px-1.5 py-[1px] text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-[var(--brand)]"
                 title="Fully managed Traefik — this panel controls Traefik's static and dynamic configuration"
               >
                 Managed
