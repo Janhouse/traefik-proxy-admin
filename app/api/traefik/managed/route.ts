@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getGlobalConfig,
-  getManagedSecrets,
+  getManagedSecretMeta,
   getManagedStaticConfig,
   getManagedStaticState,
   updateManagedStaticConfig,
@@ -9,11 +9,9 @@ import {
 import {
   buildStaticConfigObject,
   hashStaticConfig,
-  hashText,
   isManagedMode,
   panelInternalUrl,
   parseAdminPanelAuthUsers,
-  serializeSecretsEnv,
   stringifyStaticConfig,
 } from "@/lib/managed-traefik";
 import {
@@ -36,11 +34,11 @@ async function buildResponse(): Promise<ManagedModeResponse> {
       status: null,
     };
   }
-  const [globalConfig, config, state, secrets] = await Promise.all([
+  const [globalConfig, config, state, secretMeta] = await Promise.all([
     getGlobalConfig(),
     getManagedStaticConfig(),
     getManagedStaticState(),
-    getManagedSecrets(),
+    getManagedSecretMeta(),
   ]);
   const currentHash = hashStaticConfig(
     stringifyStaticConfig(
@@ -51,15 +49,15 @@ async function buildResponse(): Promise<ManagedModeResponse> {
   );
   // Secrets aren't in traefik.yml (they're env vars), but changing them still
   // needs a Traefik restart — so a secret change must also flip "pending".
-  const currentSecretsHash = hashText(serializeSecretsEnv(secrets));
+  // The names + hash come from the DB; the values live in the encrypted file.
   const pending =
     state.lastFetchedHash !== currentHash ||
-    state.lastFetchedSecretsHash !== currentSecretsHash;
+    state.lastFetchedSecretsHash !== secretMeta.hash;
   return {
     managed: true,
     adminAuthConfigured,
     config,
-    secretNames: Object.keys(secrets).sort(),
+    secretNames: secretMeta.names,
     status: {
       currentHash,
       lastFetchedHash: state.lastFetchedHash,

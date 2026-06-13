@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getGlobalConfig,
-  getManagedSecrets,
-  recordManagedSecretsFetch,
-} from "@/lib/app-config";
+import { getGlobalConfig, recordManagedSecretsFetch } from "@/lib/app-config";
 import {
   hashText,
   isManagedMode,
   isPublicDomainRequest,
   serializeSecretsEnv,
 } from "@/lib/managed-traefik";
+import { readManagedSecrets } from "@/lib/managed-secrets-store";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +36,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const body = serializeSecretsEnv(await getManagedSecrets());
+  const body = serializeSecretsEnv(await readManagedSecrets());
   await recordManagedSecretsFetch(hashText(body));
   return new NextResponse(body, {
     headers: {

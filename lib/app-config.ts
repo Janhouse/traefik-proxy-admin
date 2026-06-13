@@ -5,6 +5,7 @@ import {
   DEFAULT_MANAGED_STATIC_CONFIG,
   type ManagedStaticConfig,
 } from "@/lib/managed-traefik-types";
+import { hashText } from "@/lib/managed-traefik";
 
 export interface GlobalTraefikConfig {
   globalMiddlewares: string[];
@@ -95,11 +96,17 @@ async function readConfigValue<T>(key: string): Promise<T | null> {
   }
 }
 
+async function deleteConfigValue(key: string): Promise<void> {
+  await db.delete(appConfig).where(eq(appConfig.key, key));
+}
+
 /* ── Managed-Traefik static config store ──────────────────────────────────── */
 
 const MANAGED_STATIC_CONFIG_KEY = "managed_static_config";
 const MANAGED_STATIC_STATE_KEY = "managed_static_state";
-const MANAGED_SECRETS_KEY = "managed_secrets";
+const MANAGED_SECRET_META_KEY = "managed_secret_meta";
+/** Older builds stored credential VALUES here; purged on the next write. */
+const MANAGED_SECRETS_LEGACY_KEY = "managed_secrets";
 
 export interface ManagedStaticState {
   lastFetchedAt: string | null;
@@ -174,34 +181,37 @@ export async function recordManagedSecretsFetch(hash: string): Promise<void> {
   );
 }
 
-/* ── DNS-provider credentials (write-only secret store) ───────────────────── */
+/* ── DNS-provider credential metadata ─────────────────────────────────────
+ * Only the credential NAMES and a hash live in the database — the VALUES are
+ * kept in the encrypted file (see lib/managed-secrets-store.ts). The hash lets
+ * the managed status compute "pending" without reading/decrypting the file. */
 
-/**
- * Raw credential values. SERVER-ONLY and never returned through any
- * browser-facing endpoint — only the in-network wrapper reads these via
- * /api/traefik/managed/secrets-env (which refuses proxied requests).
- */
-export async function getManagedSecrets(): Promise<Record<string, string>> {
+export interface ManagedSecretMeta {
+  names: string[];
+  /** hashText(serializeSecretsEnv(values)) — matches the wrapper's fetch hash. */
+  hash: string;
+}
+
+export async function getManagedSecretMeta(): Promise<ManagedSecretMeta> {
+  const empty: ManagedSecretMeta = { names: [], hash: hashText("") };
   try {
-    const saved = await readConfigValue<Record<string, string>>(MANAGED_SECRETS_KEY);
-    if (!saved || typeof saved !== "object") return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(saved)) {
-      if (typeof v === "string") out[k] = v;
-    }
-    return out;
+    const saved = await readConfigValue<ManagedSecretMeta>(MANAGED_SECRET_META_KEY);
+    return {
+      names: Array.isArray(saved?.names) ? saved!.names : [],
+      hash: typeof saved?.hash === "string" ? saved!.hash : hashText(""),
+    };
   } catch (error) {
-    console.error("Error fetching managed secrets:", error);
-    return {};
+    console.error("Error fetching managed secret meta:", error);
+    return empty;
   }
 }
 
-export async function updateManagedSecrets(
-  secrets: Record<string, string>
-): Promise<void> {
+export async function setManagedSecretMeta(meta: ManagedSecretMeta): Promise<void> {
   await upsertConfigValue(
-    MANAGED_SECRETS_KEY,
-    JSON.stringify(secrets),
-    "Managed Traefik DNS-provider credentials (write-only via the web)"
+    MANAGED_SECRET_META_KEY,
+    JSON.stringify(meta),
+    "Managed Traefik credential names + hash (values live in the encrypted file)"
   );
+  // Purge any plaintext values written by an older build.
+  await deleteConfigValue(MANAGED_SECRETS_LEGACY_KEY);
 }
