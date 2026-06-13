@@ -60,7 +60,10 @@ services:
       - traefik_data:/data # acme-<resolver>.json certificate storage
     environment:
       PANEL_URL: http://traefik-configurator:3000
-      # dnsChallenge resolvers need their provider credentials here, e.g.:
+      # DNS-challenge provider credentials are best set in the admin panel
+      # (Config → Managed Traefik → DNS provider credentials): they're stored
+      # write-only and injected here by the wrapper, so they never need to live
+      # in this file. You can still hard-code them as env vars if you prefer:
       # CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
     depends_on:
       traefik-configurator:
