@@ -149,6 +149,9 @@ export function ManagedStaticSection() {
           value={config.certResolvers}
           onChange={(certResolvers) => setConfig({ ...config, certResolvers })}
           entrypointNames={config.entrypoints.map((e) => e.name)}
+          secretNames={secretNames}
+          secretEdits={secretEdits}
+          onSecretEditsChange={setSecretEdits}
           disabled={isSaving}
         />
 

@@ -5,6 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Minus, KeyRound, RotateCcw } from "lucide-react";
 import type { ManagedSecretEdits } from "@/lib/managed-traefik-types";
+import {
+  pendingValue,
+  setValue,
+  toggleRemove as toggleRemoveEdit,
+} from "@/lib/managed-secret-edits";
 
 interface ManagedSecretsEditorProps {
   /** Names of credentials already stored (values never leave the server). */
@@ -17,10 +22,12 @@ interface ManagedSecretsEditorProps {
 }
 
 /**
- * Write-only editor for DNS-provider credentials. Stored values are never
- * sent to the browser, so existing credentials show as "set" with an empty
- * field; typing replaces the value, and the X removes it. New rows add a
- * name + value. Everything is committed as a {@link ManagedSecretEdits} batch.
+ * Audit + custom editor for DNS-provider credentials: lists every credential
+ * currently set (across all providers) so they can be replaced or removed,
+ * and lets advanced users add arbitrary env vars not covered by a provider's
+ * guided fields. Stored values are never sent to the browser, so existing
+ * credentials show as "set" with an empty field. Everything is committed as a
+ * {@link ManagedSecretEdits} batch.
  */
 export function ManagedSecretsEditor({
   existingNames,
@@ -30,28 +37,15 @@ export function ManagedSecretsEditor({
   hint,
 }: ManagedSecretsEditorProps) {
   const removed = new Set(edits.remove);
-  const replacementOf = (name: string) =>
-    edits.upsert.find((u) => u.name === name)?.value ?? "";
+  const replacementOf = (name: string) => pendingValue(edits, name) ?? "";
   // New rows = upserts whose name isn't an existing credential (incl. the
   // single blank "add" row — kept unique by disabling Add while one exists).
   const newRows = edits.upsert.filter((u) => !existingNames.includes(u.name));
   const hasBlankRow = edits.upsert.some((u) => u.name === "");
 
-  const setReplacement = (name: string, value: string) => {
-    const rest = edits.upsert.filter((u) => u.name !== name);
-    onChange({ ...edits, upsert: value ? [...rest, { name, value }] : rest });
-  };
-  const toggleRemove = (name: string) =>
-    onChange({
-      ...edits,
-      remove: removed.has(name)
-        ? edits.remove.filter((n) => n !== name)
-        : [...edits.remove, name],
-      // dropping a pending replacement when removing keeps intent clear
-      upsert: removed.has(name)
-        ? edits.upsert
-        : edits.upsert.filter((u) => u.name !== name),
-    });
+  const setReplacement = (name: string, value: string) =>
+    onChange(setValue(edits, name, value));
+  const toggleRemove = (name: string) => onChange(toggleRemoveEdit(edits, name));
   const updateNewRow = (oldName: string, patch: Partial<{ name: string; value: string }>) =>
     onChange({
       ...edits,
@@ -74,12 +68,12 @@ export function ManagedSecretsEditor({
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-foreground">
-            DNS provider credentials
+            All stored credentials
           </p>
           <p className="text-[12px] text-[var(--meta)]">
-            Set as environment variables for Traefik (e.g.{" "}
-            <span className="mono">CF_DNS_API_TOKEN</span>). Write-only — values
-            are never shown again and can&apos;t be read back through the web.
+            Every credential currently set, across all providers — replace,
+            remove, or add a custom environment variable. Write-only: values are
+            never shown again and can&apos;t be read back through the web.
             {hint ? ` ${hint}` : ""}
           </p>
         </div>
