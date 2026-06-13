@@ -99,10 +99,14 @@ async function readConfigValue<T>(key: string): Promise<T | null> {
 
 const MANAGED_STATIC_CONFIG_KEY = "managed_static_config";
 const MANAGED_STATIC_STATE_KEY = "managed_static_state";
+const MANAGED_SECRETS_KEY = "managed_secrets";
 
 export interface ManagedStaticState {
   lastFetchedAt: string | null;
   lastFetchedHash: string | null;
+  /** Hash of the secrets env the wrapper last fetched (separate from the
+   * static config; either changing requires a Traefik restart). */
+  lastFetchedSecretsHash: string | null;
 }
 
 export async function getManagedStaticConfig(): Promise<ManagedStaticConfig> {
@@ -138,15 +142,18 @@ export async function getManagedStaticState(): Promise<ManagedStaticState> {
     return {
       lastFetchedAt: saved?.lastFetchedAt ?? null,
       lastFetchedHash: saved?.lastFetchedHash ?? null,
+      lastFetchedSecretsHash: saved?.lastFetchedSecretsHash ?? null,
     };
   } catch (error) {
     console.error("Error fetching managed static state:", error);
-    return { lastFetchedAt: null, lastFetchedHash: null };
+    return { lastFetchedAt: null, lastFetchedHash: null, lastFetchedSecretsHash: null };
   }
 }
 
 export async function recordManagedStaticFetch(hash: string): Promise<void> {
+  const prev = await getManagedStaticState();
   const state: ManagedStaticState = {
+    ...prev,
     lastFetchedAt: new Date().toISOString(),
     lastFetchedHash: hash,
   };
@@ -154,5 +161,47 @@ export async function recordManagedStaticFetch(hash: string): Promise<void> {
     MANAGED_STATIC_STATE_KEY,
     JSON.stringify(state),
     "Last static config fetch by the managed Traefik wrapper"
+  );
+}
+
+export async function recordManagedSecretsFetch(hash: string): Promise<void> {
+  const prev = await getManagedStaticState();
+  const state: ManagedStaticState = { ...prev, lastFetchedSecretsHash: hash };
+  await upsertConfigValue(
+    MANAGED_STATIC_STATE_KEY,
+    JSON.stringify(state),
+    "Last static config fetch by the managed Traefik wrapper"
+  );
+}
+
+/* ── DNS-provider credentials (write-only secret store) ───────────────────── */
+
+/**
+ * Raw credential values. SERVER-ONLY and never returned through any
+ * browser-facing endpoint — only the in-network wrapper reads these via
+ * /api/traefik/managed/secrets-env (which refuses proxied requests).
+ */
+export async function getManagedSecrets(): Promise<Record<string, string>> {
+  try {
+    const saved = await readConfigValue<Record<string, string>>(MANAGED_SECRETS_KEY);
+    if (!saved || typeof saved !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(saved)) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return out;
+  } catch (error) {
+    console.error("Error fetching managed secrets:", error);
+    return {};
+  }
+}
+
+export async function updateManagedSecrets(
+  secrets: Record<string, string>
+): Promise<void> {
+  await upsertConfigValue(
+    MANAGED_SECRETS_KEY,
+    JSON.stringify(secrets),
+    "Managed Traefik DNS-provider credentials (write-only via the web)"
   );
 }

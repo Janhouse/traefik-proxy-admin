@@ -63,7 +63,57 @@ export interface ManagedModeResponse {
   /** ADMIN_PANEL_AUTH parses to at least one htpasswd user. */
   adminAuthConfigured: boolean;
   config: ManagedStaticConfig | null;
+  /** Names of stored DNS-provider credentials. Values are write-only — they
+   * are NEVER returned through the web; only the in-network wrapper reads them. */
+  secretNames: string[];
   status: ManagedStaticStatus | null;
+}
+
+/* ── DNS-provider credentials (write-only secrets) ────────────────────────── */
+
+/** A batch of credential changes from the UI. `upsert` sets/replaces values;
+ * `remove` deletes by name. The UI never receives existing values, so an
+ * untouched credential is simply absent from both lists. */
+export interface ManagedSecretEdits {
+  upsert: { name: string; value: string }[];
+  remove: string[];
+}
+
+const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/** Traefik/lego read provider credentials from env vars — names must be a
+ * valid shell env identifier (e.g. CF_DNS_API_TOKEN). */
+export function isValidEnvName(name: string): boolean {
+  return ENV_NAME_RE.test(name);
+}
+
+/**
+ * Apply a credential edit batch to the current secret map (pure). Removals
+ * run first, then upserts, so re-adding a removed name in one batch keeps it.
+ */
+export function applySecretEdits(
+  current: Record<string, string>,
+  edits: ManagedSecretEdits
+):
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const next = { ...current };
+  for (const name of edits.remove ?? []) delete next[name];
+  for (const { name, value } of edits.upsert ?? []) {
+    if (!isValidEnvName(name)) {
+      errors.push(
+        `Invalid environment variable name "${name}" — use A–Z, 0–9 and underscore, starting with a letter.`
+      );
+      continue;
+    }
+    if (typeof value !== "string" || value.length === 0) {
+      errors.push(`Credential "${name}" has no value.`);
+      continue;
+    }
+    next[name] = value;
+  }
+  return errors.length ? { ok: false, errors } : { ok: true, value: next };
 }
 
 /* ── Validation (pure) ────────────────────────────────────────────────────── */

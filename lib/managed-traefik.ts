@@ -112,6 +112,65 @@ export function stringifyStaticConfig(obj: Record<string, unknown>): string {
   return stringify(obj);
 }
 
+export function hashText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 export function hashStaticConfig(yamlText: string): string {
-  return createHash("sha256").update(yamlText).digest("hex");
+  return hashText(yamlText);
+}
+
+/* ── DNS-provider credentials → Traefik env ───────────────────────────────── */
+
+/**
+ * Render credentials as a shell-sourceable dotenv for the Traefik wrapper.
+ * Names are validated A–Z/0–9/underscore; values are single-quoted with
+ * embedded single quotes escaped, so `. file` in POSIX sh is safe for
+ * arbitrary value bytes (no interpolation, no word-splitting, no injection).
+ */
+export function serializeSecretsEnv(secrets: Record<string, string>): string {
+  const names = Object.keys(secrets)
+    .filter((name) => /^[A-Z][A-Z0-9_]*$/.test(name))
+    .sort();
+  if (names.length === 0) return "";
+  return (
+    names
+      .map((name) => {
+        const escaped = secrets[name].replace(/'/g, () => "'\\''");
+        return `export ${name}='${escaped}'`;
+      })
+      .join("\n") + "\n"
+  );
+}
+
+/** Host portion (lowercased, no port) of an authority like
+ * "admin.example.com:443" or "[::1]:3000". */
+export function hostOnly(authority: string | null | undefined): string {
+  if (!authority) return "";
+  const a = authority.trim().toLowerCase();
+  const m = a.match(/^(\[[^\]]+\]|[^:]+)(?::\d+)?$/);
+  return m ? m[1] : a;
+}
+
+/**
+ * True if a request reached the panel via its PUBLIC admin domain — i.e.
+ * through Traefik's admin route, which is the only way the panel is exposed
+ * to the web (port 3000 is unpublished). The auto-generated admin router
+ * matches Host(adminPanelDomain) and passes the host through, so a web
+ * request always arrives with that Host; the in-network wrapper reaches the
+ * panel by its internal service name, so its Host never matches.
+ *
+ * We can't key off X-Forwarded-* presence: Next.js synthesizes those headers
+ * even for direct connections, so they're useless as a proxy signal here.
+ */
+export function isPublicDomainRequest(
+  headers: Headers,
+  adminPanelDomain: string
+): boolean {
+  const pub = hostOnly(adminPanelDomain);
+  if (!pub) return false;
+  return (
+    hostOnly(headers.get("host")) === pub ||
+    hostOnly(headers.get("x-forwarded-host")) === pub
+  );
 }

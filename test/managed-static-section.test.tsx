@@ -50,6 +50,7 @@ function managedResponse(over: Partial<ManagedModeResponse> = {}): ManagedModeRe
     managed: true,
     adminAuthConfigured: true,
     config: baseConfig,
+    secretNames: [],
     status: {
       currentHash: "h1",
       lastFetchedHash: "h1",
