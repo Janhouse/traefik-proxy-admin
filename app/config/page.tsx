@@ -1,11 +1,12 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Save, RefreshCw } from "lucide-react";
+import { Save, RefreshCw, ShieldCheck } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
 import { PageBand, PageMain } from "@/components/page-band";
 import { ConfigForm } from "@/components/config-form";
 import { useConfig } from "@/lib/hooks/use-config";
+import { useManagedMode } from "@/lib/hooks/use-managed-mode";
 
 export default function ConfigPage() {
   const {
@@ -17,6 +18,7 @@ export default function ConfigPage() {
     handleSave,
     handleDiscard,
   } = useConfig();
+  const managed = useManagedMode();
 
   if (isLoading) {
     return (
@@ -36,6 +38,15 @@ export default function ConfigPage() {
         subtitle="Global Traefik & certificate settings"
         actions={
           <>
+            {managed && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand)_40%,transparent)] bg-[var(--grad-brand-soft)] px-2.5 py-1 text-[12px] font-semibold text-[var(--brand)]"
+                title="This panel manages Traefik's static and dynamic configuration"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Fully managed
+              </span>
+            )}
             {hasUnsavedChanges && (
               <Button variant="outline" onClick={handleDiscard}>
                 Discard Changes

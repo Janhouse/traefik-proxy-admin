@@ -7,6 +7,7 @@ import { Settings, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppFooter } from "@/components/app-footer";
 import { Toaster } from "@/components/toaster";
+import { useManagedMode } from "@/lib/hooks/use-managed-mode";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -46,18 +47,29 @@ function BrandMark() {
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const managed = useManagedMode();
 
   return (
     <div className="flex min-h-screen flex-col">
       <header className="app-header">
         <div className="mx-auto flex h-[60px] w-full max-w-[1240px] items-center gap-5 px-4 sm:px-6">
-          <NextLink
-            href="/"
-            className="flex items-center gap-2.5 whitespace-nowrap text-base font-bold tracking-tight text-foreground"
-          >
-            <BrandMark />
-            Traefik Admin
-          </NextLink>
+          <div className="relative">
+            {managed && (
+              <span
+                className="pointer-events-none absolute -top-2.5 left-6 z-10 -rotate-[7deg] select-none rounded-[3px] border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[var(--grad-brand-soft)] px-1.5 py-[1px] text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-[var(--brand)]"
+                title="Fully managed Traefik — this panel controls Traefik's static and dynamic configuration"
+              >
+                Managed
+              </span>
+            )}
+            <NextLink
+              href="/"
+              className="flex items-center gap-2.5 whitespace-nowrap text-base font-bold tracking-tight text-foreground"
+            >
+              <BrandMark />
+              Traefik Admin
+            </NextLink>
+          </div>
 
           <nav className="hidden items-center gap-0.5 lg:flex">
             {NAV.map((item) => (
