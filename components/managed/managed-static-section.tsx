@@ -12,11 +12,42 @@ import {
 import { Section } from "@/components/form-section";
 import { ManagedEntrypointsEditor } from "@/components/managed/managed-entrypoints-editor";
 import { ManagedResolversEditor } from "@/components/managed/managed-resolvers-editor";
+import { ManagedSecretsEditor } from "@/components/managed/managed-secrets-editor";
 import { useManagedConfig } from "@/lib/hooks/use-managed-config";
-import type { ManagedLogLevel } from "@/lib/managed-traefik-types";
+import type {
+  ManagedLogLevel,
+  ManagedStaticConfig,
+} from "@/lib/managed-traefik-types";
 import { AlertTriangle, CheckCircle2, Clock, Save } from "lucide-react";
 
 const LOG_LEVELS: ManagedLogLevel[] = ["ERROR", "WARN", "INFO", "DEBUG"];
+
+/** Common env var names per Traefik DNS provider, for a gentle UI hint. */
+const PROVIDER_ENV_HINTS: Record<string, string> = {
+  cloudflare: "CF_DNS_API_TOKEN",
+  route53: "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY",
+  digitalocean: "DO_AUTH_TOKEN",
+  gandiv5: "GANDIV5_PERSONAL_ACCESS_TOKEN",
+  gcloud: "GCE_PROJECT, GCE_SERVICE_ACCOUNT_FILE",
+  azuredns: "AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID",
+  namecheap: "NAMECHEAP_API_USER, NAMECHEAP_API_KEY",
+  hetzner: "HETZNER_API_KEY",
+  ovh: "OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, OVH_CONSUMER_KEY",
+};
+
+function credentialHint(config: ManagedStaticConfig): string {
+  const providers = Array.from(
+    new Set(
+      config.certResolvers
+        .filter((r) => r.challenge === "dnsChallenge" && r.dnsProvider)
+        .map((r) => r.dnsProvider!.toLowerCase().trim())
+    )
+  );
+  const known = providers
+    .map((p) => PROVIDER_ENV_HINTS[p] && `${p} usually needs ${PROVIDER_ENV_HINTS[p]}`)
+    .filter(Boolean);
+  return known.length ? known.join("; ") + "." : "";
+}
 
 function StatusChip({
   pending,
@@ -62,6 +93,9 @@ export function ManagedStaticSection() {
     adminAuthConfigured,
     config,
     setConfig,
+    secretNames,
+    secretEdits,
+    setSecretEdits,
     status,
     errors,
     isSaving,
@@ -116,6 +150,14 @@ export function ManagedStaticSection() {
           onChange={(certResolvers) => setConfig({ ...config, certResolvers })}
           entrypointNames={config.entrypoints.map((e) => e.name)}
           disabled={isSaving}
+        />
+
+        <ManagedSecretsEditor
+          existingNames={secretNames}
+          edits={secretEdits}
+          onChange={setSecretEdits}
+          disabled={isSaving}
+          hint={credentialHint(config)}
         />
 
         <div className="max-w-[200px] space-y-1.5">

@@ -156,8 +156,11 @@ export function ManagedResolversEditor({
                     disabled={disabled}
                   />
                   <p className="text-[12px] text-[var(--meta)]">
-                    Provider credentials go on the traefik service as env vars in
-                    docker-compose.managed.yml — never stored here.
+                    Set this provider&apos;s API credentials below under{" "}
+                    <span className="font-medium text-foreground">
+                      DNS provider credentials
+                    </span>{" "}
+                    — no need to edit the compose file.
                   </p>
                 </div>
               )}
