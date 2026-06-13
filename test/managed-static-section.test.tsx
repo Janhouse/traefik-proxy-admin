@@ -191,4 +191,49 @@ describe("ManagedStaticSection", () => {
       expect(body.entrypoints.map((e) => e.name)).toEqual(["websecure"]);
     });
   });
+
+  it("deletes credentials even when the static config is rejected", async () => {
+    const user = userEvent.setup();
+    // Credential removal must NOT be blocked by an invalid/rejected config.
+    let names = ["CF_DNS_API_TOKEN"];
+    const fm = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT" && url.includes("/secrets")) {
+        names = [];
+        return { ok: true, json: async () => ({ secretNames: [] }) };
+      }
+      if (init?.method === "PUT") {
+        return { ok: false, status: 400, json: async () => ({ errors: ["Bad config"] }) };
+      }
+      return { ok: true, json: async () => managedResponse({ secretNames: names }) };
+    });
+    vi.stubGlobal("fetch", fm);
+    render(<ManagedStaticSection />);
+
+    // mark the stored credential for removal
+    await user.click(
+      await screen.findByRole("button", { name: "Remove credential CF_DNS_API_TOKEN" })
+    );
+    // make the config dirty so a (rejected) config PUT is also attempted
+    const port = await screen.findByLabelText("Port", { selector: "#ep-port-1" });
+    await user.clear(port);
+    await user.type(port, "8443");
+
+    await user.click(screen.getByRole("button", { name: /Save Managed Config/ }));
+
+    await waitFor(() => {
+      const secretsPut = fm.mock.calls.find(
+        (c) => c[1]?.method === "PUT" && String(c[0]).includes("/secrets")
+      );
+      expect(secretsPut).toBeDefined();
+      expect(JSON.parse(String(secretsPut![1]!.body)).remove).toContain("CF_DNS_API_TOKEN");
+    });
+    // config error surfaced…
+    expect(await screen.findByText("Bad config")).toBeDefined();
+    // …yet the credential removal took effect (row is gone after refresh)
+    await waitFor(() => expect(screen.queryByText("CF_DNS_API_TOKEN")).toBeNull());
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining("Credentials saved"),
+      "error"
+    );
+  });
 });

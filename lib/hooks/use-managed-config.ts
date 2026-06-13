@@ -45,18 +45,27 @@ export function useManagedConfig(pollMs = 10_000) {
     dirtyRef.current = hasUnsavedChanges;
   }, [hasUnsavedChanges]);
 
-  const applyResponse = useCallback((data: ManagedModeResponse, force = false) => {
-    setManaged(data.managed);
-    setAdminAuthConfigured(data.adminAuthConfigured);
-    setStatus(data.status);
-    if (force || !dirtyRef.current) {
-      setSecretNames(data.secretNames);
-      if (data.config) {
-        setConfig(data.config);
-        setOriginalConfig(data.config);
+  const applyResponse = useCallback(
+    (
+      data: ManagedModeResponse,
+      opts: { force?: boolean; syncConfig?: boolean } = {}
+    ) => {
+      const { force = false, syncConfig = true } = opts;
+      setManaged(data.managed);
+      setAdminAuthConfigured(data.adminAuthConfigured);
+      setStatus(data.status);
+      if (force || !dirtyRef.current) {
+        setSecretNames(data.secretNames);
+        // syncConfig=false keeps the user's in-progress (e.g. rejected) config
+        // edits instead of overwriting them with the server's last-saved copy.
+        if (syncConfig && data.config) {
+          setConfig(data.config);
+          setOriginalConfig(data.config);
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -82,16 +91,22 @@ export function useManagedConfig(pollMs = 10_000) {
       body: JSON.stringify(body),
     });
 
-  const failFrom = async (res: Response, fallback: string) => {
+  const errorsOf = async (res: Response, fallback: string): Promise<string[]> => {
     const body = (await res.json().catch(() => ({}))) as { errors?: string[] };
-    setErrors(body.errors ?? [fallback]);
+    return body.errors ?? [fallback];
   };
 
   const handleSave = useCallback(async () => {
     if (!config) return;
     setIsSaving(true);
     setErrors([]);
+    const errs: string[] = [];
+    let secretsSaved = false;
+    let configSaved = false;
     try {
+      // Credentials and static config are INDEPENDENT resources. A rejected
+      // config must never hide a successful credential change (e.g. deleting
+      // credentials while the config is mid-edit), and vice versa.
       if (secretsDirty) {
         // Drop unfilled "add" rows; the rest are validated server-side.
         const edits: ManagedSecretEdits = {
@@ -99,25 +114,38 @@ export function useManagedConfig(pollMs = 10_000) {
           upsert: secretEdits.upsert.filter((u) => u.name !== ""),
         };
         const res = await putJson("/api/traefik/managed/secrets", edits);
-        if (!res.ok) {
-          await failFrom(res, "Failed to save credentials");
-          toast("Credentials rejected — fix the errors and retry", "error");
-          return;
+        if (res.ok) {
+          secretsSaved = true;
+          setSecretEdits(NO_EDITS);
+        } else {
+          errs.push(...(await errorsOf(res, "Failed to save credentials")));
         }
       }
       if (configDirty) {
         const res = await putJson("/api/traefik/managed", config);
-        if (!res.ok) {
-          await failFrom(res, "Failed to save managed configuration");
-          toast("Managed config rejected — fix the errors and retry", "error");
-          return;
-        }
+        if (res.ok) configSaved = true;
+        else errs.push(...(await errorsOf(res, "Failed to save managed configuration")));
       }
-      // Success: clear edits and pull fresh names/status.
-      setSecretEdits(NO_EDITS);
+
+      // Reflect what actually persisted: always refresh names + status; only
+      // adopt the server's config when ours saved, so a rejected config keeps
+      // the user's edits to fix.
       const res = await fetch("/api/traefik/managed", { cache: "no-store" });
-      if (res.ok) applyResponse((await res.json()) as ManagedModeResponse, true);
-      toast("Managed Traefik config saved — applies on the next restart cycle");
+      if (res.ok) {
+        applyResponse((await res.json()) as ManagedModeResponse, {
+          force: true,
+          syncConfig: configSaved || !configDirty,
+        });
+      }
+
+      setErrors(errs);
+      if (errs.length === 0) {
+        toast("Managed Traefik config saved — applies on the next restart cycle");
+      } else if (secretsSaved) {
+        toast("Credentials saved; other changes were rejected — see the errors", "error");
+      } else {
+        toast("Changes were rejected — see the errors", "error");
+      }
     } catch (error) {
       console.error("Error saving managed config:", error);
       toast("Failed to save managed configuration", "error");
