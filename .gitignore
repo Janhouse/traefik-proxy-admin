@@ -31,6 +31,9 @@
 *.p12
 acme.json
 letsencrypt/
+# managed DNS-provider credentials (encrypted; dev default path lives in cwd)
+.managed-secrets.enc
+.managed-secrets.enc.tmp
 
 # debug
 npm-debug.log*

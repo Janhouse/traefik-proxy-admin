@@ -76,12 +76,15 @@ How it works:
 - Entrypoints and certificate resolvers are edited in the **Managed Traefik**
   section on the config page. DNS-challenge resolvers also need their provider
   credentials (e.g. `CF_DNS_API_TOKEN` for Cloudflare); set them right there
-  under **DNS provider credentials**. Credentials are **write-only**: they can
-  be set or replaced through the web but are never returned, and only the
-  in-network Traefik wrapper can read them (the read endpoint refuses any
-  proxied request). The wrapper injects them as env vars and restarts Traefik
-  when they change. You can still hard-code them as env vars on the `traefik`
-  service instead, if you prefer.
+  under **DNS provider credentials** — any number of them, for one or several
+  resolvers/providers. Credentials are **write-only**: they can be set or
+  replaced through the web but are never returned, and only the in-network
+  Traefik wrapper can read them (the read endpoint refuses requests that come
+  via the public domain). Values are stored **encrypted at rest** in a file on
+  the panel volume (AES-256-GCM, keyed by `MANAGED_SECRETS_KEY`) — never in the
+  database, which keeps only the names. The wrapper decrypts them, injects them
+  as env vars, and restarts Traefik when they change. You can still hard-code
+  them as env vars on the `traefik` service instead, if you prefer.
 - **Security model**: only ports 80/443 are published. The panel (3000) and
   the Traefik API (8080) stay on the internal compose network; the panel is
   reachable only through an auto-generated Traefik route on your

@@ -43,6 +43,12 @@ services:
       TRAEFIK_API_URL: http://traefik:8080
       PANEL_INTERNAL_URL: http://traefik-configurator:3000
       ADMIN_PANEL_AUTH: ${ADMIN_PANEL_AUTH:-}
+      # Encrypts DNS-provider credentials at rest in the file below. Required
+      # so credentials set in the UI can't be read off disk without the key.
+      MANAGED_SECRETS_KEY: ${MANAGED_SECRETS_KEY:?set MANAGED_SECRETS_KEY in .env}
+      MANAGED_SECRETS_FILE: /data/managed-secrets.enc
+    volumes:
+      - panel_data:/data # encrypted managed-credentials file
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,3 +78,4 @@ services:
 volumes:
   postgres_data:
   traefik_data:
+  panel_data:
