@@ -142,6 +142,7 @@ export function ManagedStaticSection() {
         <ManagedEntrypointsEditor
           value={config.entrypoints}
           onChange={(entrypoints) => setConfig({ ...config, entrypoints })}
+          resolverNames={config.certResolvers.map((r) => r.name).filter(Boolean)}
           disabled={isSaving}
         />
 
