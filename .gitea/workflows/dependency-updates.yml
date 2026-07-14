@@ -7,7 +7,7 @@ on:
 
 jobs:
   update:
-    uses: https://git.janhouse.lv/janhouse/gitea-pnpm-deps-update/.gitea/workflows/run.yml@b1795c4ff9d11cd7dd1ec3e2df6e82e414dc7453
+    uses: https://git.janhouse.lv/janhouse/gitea-pnpm-deps-update/.gitea/workflows/run.yml@5d15d3043a7d4ab86271cf1ea1500728af274528
     with:
       base-branch: main
       pnpm-version: '10'
