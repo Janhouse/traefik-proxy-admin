@@ -2,12 +2,12 @@ name: Dependency updates
 run-name: Weekly dependency update by ${{ gitea.actor }} 📦
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: '50 6 * * 1'
   workflow_dispatch:
 
 jobs:
   update:
-    uses: https://git.janhouse.lv/janhouse/gitea-pnpm-deps-update/.gitea/workflows/run.yml@c5d1654e15454d56af8609633fdb86ded9356804
+    uses: https://git.janhouse.lv/janhouse/gitea-pnpm-deps-update/.gitea/workflows/run.yml@f3545864deb79897fecf8a75fb2ace0e71f369df
     with:
       base-branch: main
       pnpm-version: '10'
