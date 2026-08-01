@@ -43,7 +43,7 @@ jobs:
 
       - name: Download build metadata
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: https://github.com/Janhouse/gitea-download-artifact@v4
+        uses: actions/download-artifact@v4
         with:
           name: build-metadata
           github-token: ${{ secrets.ACTIONS_GITEA_TOKEN }}

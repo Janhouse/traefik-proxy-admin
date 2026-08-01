@@ -85,7 +85,7 @@ jobs:
           }
           EOF
       - name: Upload build metadata
-        uses: https://github.com/Janhouse/gitea-upload-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
           name: build-metadata
           path: build-metadata.json
