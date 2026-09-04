@@ -85,7 +85,12 @@ jobs:
           }
           EOF
       - name: Upload build metadata
-        uses: https://github.com/Janhouse/gitea-upload-artifact@v4
+        uses: actions/upload-artifact@v4
+        # The image is already pushed by this point and sbom.yml treats this
+        # artifact as optional (download has continue-on-error + defaults), so a
+        # runner-side artifact failure (e.g. the GHESNotSupportedError seen on
+        # 2026-08-31, run #374) must not turn a successful build red.
+        continue-on-error: true
         with:
           name: build-metadata
           path: build-metadata.json
