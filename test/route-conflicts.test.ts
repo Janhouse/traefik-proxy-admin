@@ -214,11 +214,39 @@ describe("getRouteConflicts", () => {
     expect(res.routers[0]).toEqual({
       routerName: "grafana@file",
       hosts: ["grafana.example.com"],
+      hostOnly: true,
       entryPoints: ["websecure"],
       provider: "file",
       managedServiceId: null,
     });
     expect(res.routers[0].internal).toBeUndefined();
+  });
+
+  it("classifies hostOnly and lowercases hosts, including v2 multi-arg Host()", async () => {
+    h.state.joinRows = [];
+    h.state.allDomains = [mkDomain()];
+    h.state.httpRouters = [
+      { name: "a@file", rule: "Host(`Grafana.Example.COM`)", entryPoints: ["websecure"], provider: "file" },
+      { name: "b@file", rule: "Host(`a.example.com`, `B.example.com`) || HostRegexp(`^x\\.example\\.com$`)", entryPoints: ["websecure"], provider: "file" },
+      { name: "c@file", rule: "Host(`api.example.com`) && PathPrefix(`/v1`)", entryPoints: ["websecure"], provider: "file" },
+      { name: "d@docker", rule: "(Host(`app.example.com`)) && Path(`/.well-known/traefik-cert-trigger`)", entryPoints: ["websecure"], provider: "docker" },
+      { name: "e@file", rule: "HostRegexp(`^.+\\.example\\.com$`)", entryPoints: ["websecure"], provider: "file" },
+      { name: "f@file", rule: "PathPrefix(`/only-path`)", entryPoints: ["web"], provider: "file" },
+    ];
+
+    const res = await getRouteConflicts();
+    const byName = Object.fromEntries(res.routers.map((r) => [r.routerName, r]));
+    expect(byName["a@file"].hosts).toEqual(["grafana.example.com"]);
+    expect(byName["a@file"].hostOnly).toBe(true);
+    expect(byName["b@file"].hosts).toEqual(["a.example.com", "b.example.com"]);
+    expect(byName["b@file"].hostOnly).toBe(true);
+    expect(byName["c@file"].hosts).toEqual(["api.example.com"]);
+    expect(byName["c@file"].hostOnly).toBe(false);
+    expect(byName["d@docker"].hostOnly).toBe(false);
+    expect(byName["e@file"].hosts).toEqual([]);
+    expect(byName["e@file"].hostOnly).toBe(true);
+    expect(byName["f@file"].hosts).toEqual([]);
+    expect(byName["f@file"].hostOnly).toBe(false);
   });
 
   it("maps a stale per-entrypoint router back to the service after the selection changed", async () => {

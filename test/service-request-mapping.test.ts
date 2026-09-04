@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mapServiceRequestBody } from "@/lib/service-request-mapping";
+import {
+  mapServiceRequestBody,
+  validateServiceRequestBody,
+} from "@/lib/service-request-mapping";
+import type { RuleNode } from "@/lib/route-rule";
 import type { CreateServiceRequest } from "@/lib/dto/service.dto";
 
 const base: CreateServiceRequest = {
@@ -53,6 +57,38 @@ describe("mapServiceRequestBody — match rules", () => {
     );
     expect(mapServiceRequestBody({ ...base, matchRules: [] }).matchRules).toBeNull();
     expect(mapServiceRequestBody(base).matchRules).toBeNull();
+  });
+});
+
+describe("validateServiceRequestBody — match rule gate (400s)", () => {
+  // untyped on purpose: these are the crafted bodies the API must refuse
+  const raw = (matchRules: unknown) =>
+    validateServiceRequestBody({ ...base, matchRules: matchRules as RuleNode[] });
+
+  it("passes bodies without rules and with a well-formed tree", () => {
+    expect(validateServiceRequestBody(base)).toBeNull();
+    expect(raw([])).toBeNull();
+    expect(
+      raw([
+        { type: "Host", conn: "AND", domainId: "d1", sub: "app" },
+        { type: "PathPrefix", conn: "AND", value: "/api" },
+      ])
+    ).toBeNull();
+  });
+
+  it("rejects the matcher-type injection string", () => {
+    expect(raw([{ type: "Host(`x`) || PathPrefix", conn: "AND", value: "/" }])).toMatch(
+      /Unknown match rule type/
+    );
+  });
+
+  it("rejects typo'd types, empty arguments, bad paths and non-hostnames", () => {
+    expect(raw([{ type: "PathPrefx", conn: "AND", value: "/api" }])).toMatch(/Unknown match rule type/);
+    expect(raw([{ type: "PathPrefix", conn: "AND", value: "" }])).toMatch(/needs a path/);
+    expect(raw([{ type: "Path", conn: "AND", value: "healthz" }])).toMatch(/must start with/);
+    expect(raw([{ type: "Host", conn: "AND", value: "bad host" }])).toMatch(/Invalid hostname/);
+    expect(raw([{ type: "Host", conn: "AND", value: "a`)||PathPrefix(`/" }])).toMatch(/Invalid hostname/);
+    expect(raw([{ type: "Header", conn: "AND", key: "", value: "1" }])).toMatch(/needs a key/);
   });
 });
 

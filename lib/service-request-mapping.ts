@@ -2,6 +2,20 @@ import type {
   CreateServiceRequest,
   UpdateServiceRequest,
 } from "@/lib/dto/service.dto";
+import { validateMatchRulesPayload } from "@/lib/route-rule";
+
+/**
+ * Validate the untrusted parts of a service request body. Returns an error
+ * message for a 400 response, or null when the body is acceptable. Runs on the
+ * RAW body (before mapping) so a crafted `matchRules` node — unknown/injected
+ * matcher type, empty PathPrefix(``), a Host that is not a hostname — is
+ * rejected instead of stored and later emitted (or silently dropped).
+ */
+export function validateServiceRequestBody(
+  body: CreateServiceRequest | UpdateServiceRequest
+): string | null {
+  return validateMatchRulesPayload(body.matchRules);
+}
 
 /**
  * Map the shared service request-body fields to their DB-row representation.

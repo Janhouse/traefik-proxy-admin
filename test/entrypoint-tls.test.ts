@@ -10,10 +10,26 @@ vi.mock("@/lib/traefik-api", () => ({
 
 import {
   __resetEntrypointTlsCacheForTests,
+  entrypointTlsFromApi,
   isTlsEntrypoint,
   resolveEntrypointTlsInfo,
   type EntrypointTlsInfo,
 } from "@/lib/entrypoint-tls";
+
+describe("entrypointTlsFromApi", () => {
+  it("is decisive only on default TLS or a well-known port", () => {
+    expect(entrypointTlsFromApi({ hasDefaultTls: true })).toBe(true);
+    expect(entrypointTlsFromApi({ address: ":443" })).toBe(true);
+    expect(entrypointTlsFromApi({ address: ":8443" })).toBe(true);
+    expect(entrypointTlsFromApi({ address: ":80" })).toBe(false);
+    expect(entrypointTlsFromApi({ address: "0.0.0.0:8080/tcp" })).toBe(false);
+    // no info at all, or an unknown port: no verdict (the caller decides)
+    expect(entrypointTlsFromApi(undefined)).toBeNull();
+    expect(entrypointTlsFromApi({})).toBeNull();
+    expect(entrypointTlsFromApi({ address: ":9000" })).toBeNull();
+    expect(entrypointTlsFromApi({ address: "garbage" })).toBeNull();
+  });
+});
 
 describe("isTlsEntrypoint", () => {
   const cases: Array<{
@@ -90,5 +106,37 @@ describe("resolveEntrypointTlsInfo", () => {
     // failure is briefly cached too
     await resolveEntrypointTlsInfo();
     expect(mocks.getEntrypoints).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the last good map when the API fails after a success (stale-while-error)", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getEntrypoints.mockResolvedValueOnce([
+        { name: "websecure", address: ":443", http: { tls: {} } },
+      ]);
+      const good = await resolveEntrypointTlsInfo();
+      expect(good.get("websecure")?.hasDefaultTls).toBe(true);
+
+      // success TTL elapses, then the API goes away
+      vi.advanceTimersByTime(31_000);
+      mocks.getEntrypoints.mockRejectedValue(new Error("unreachable"));
+      const stale = await resolveEntrypointTlsInfo();
+      expect(stale).toBe(good); // the SAME map, not an empty one
+      expect(stale.get("websecure")?.hasDefaultTls).toBe(true);
+      expect(mocks.getEntrypoints).toHaveBeenCalledTimes(2);
+
+      // failure TTL: no re-fetch inside it, retry after it
+      vi.advanceTimersByTime(1_000);
+      await resolveEntrypointTlsInfo();
+      expect(mocks.getEntrypoints).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(5_000);
+      mocks.getEntrypoints.mockResolvedValueOnce([{ name: "web", address: ":80" }]);
+      const fresh = await resolveEntrypointTlsInfo();
+      expect(mocks.getEntrypoints).toHaveBeenCalledTimes(3);
+      expect(fresh.get("web")).toEqual({ address: ":80", hasDefaultTls: undefined });
+      expect(fresh.has("websecure")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -37,20 +37,33 @@ function portOfAddress(address?: string): number | null {
   return Number.isFinite(port) ? port : null;
 }
 
-/** Pure heuristic: should routers bound to this entrypoint carry `tls`? */
-export function isTlsEntrypoint(
-  name: string,
-  info?: EntrypointTlsInfo
-): boolean {
-  // 1. Authoritative: the entrypoint has default TLS configured in Traefik.
+/**
+ * The AUTHORITATIVE verdict from Traefik API info alone (steps 1–2): true/false
+ * when the entrypoint declares default TLS or listens on a well-known port,
+ * null when the API gave us nothing decisive. Callers that must not guess
+ * (a legacy single-entrypoint router, which always carried `tls` on main) use
+ * this and fall back to the legacy default instead of the name heuristic.
+ */
+export function entrypointTlsFromApi(info?: EntrypointTlsInfo): boolean | null {
   if (info?.hasDefaultTls === true) return true;
-
-  // 2. Well-known ports from the listen address.
   const port = portOfAddress(info?.address);
   if (port !== null) {
     if (TLS_PORTS.has(port)) return true;
     if (PLAIN_PORTS.has(port)) return false;
   }
+  return null;
+}
+
+/** Full heuristic (API info, then the name): should routers bound to this
+ * entrypoint carry `tls`? Meant for the multi-entrypoint fan-out, where a
+ * guess is better than serving TLS on a plain port. */
+export function isTlsEntrypoint(
+  name: string,
+  info?: EntrypointTlsInfo
+): boolean {
+  // 1 + 2. Authoritative API info (default TLS, well-known port).
+  const fromApi = entrypointTlsFromApi(info);
+  if (fromApi !== null) return fromApi;
 
   // 3 + 4. Name heuristics — TLS-ish tokens checked first so "websecure" /
   // "web-tls" match before the plain "web" check.
@@ -75,7 +88,9 @@ export function isTlsEntrypoint(
 /* ── Cached lookup of entrypoint info from the Traefik API ─────────────────
  * The Traefik config endpoint is polled every ~10s, so a short TTL keeps us
  * fresh without hammering the API. Failures (unconfigured/unreachable) are
- * cached briefly too, so a down Traefik doesn't add a timeout per poll. */
+ * cached briefly too, so a down Traefik doesn't add a timeout per poll —
+ * but a failure never REPLACES a previously fetched map (stale-while-error):
+ * a blip in the API must not flip every router's tls back to guesswork. */
 
 const SUCCESS_TTL_MS = 30_000;
 const FAILURE_TTL_MS = 5_000;
@@ -103,8 +118,10 @@ export async function resolveEntrypointTlsInfo(): Promise<
     cacheExpiresAt = now + SUCCESS_TTL_MS;
     return map;
   } catch {
-    // Unconfigured or unreachable — degrade to name/port heuristics only.
-    cachedMap = new Map();
+    // Unconfigured or unreachable. Keep serving the last good map if we ever
+    // had one; only when nothing was ever fetched do we degrade to an empty
+    // map (name/port heuristics only). Either way, retry after a short TTL.
+    if (!cachedMap) cachedMap = new Map();
     cacheExpiresAt = now + FAILURE_TTL_MS;
     return cachedMap;
   }

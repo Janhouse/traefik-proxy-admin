@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { ServiceService } from "@/lib/services/service.service";
 import { DomainService } from "@/lib/services/domain.service";
 import type { UpdateServiceData, UpdateServiceRequest } from "@/lib/dto/service.dto";
-import { mapServiceRequestBody } from "@/lib/service-request-mapping";
+import {
+  mapServiceRequestBody,
+  validateServiceRequestBody,
+} from "@/lib/service-request-mapping";
 
 export async function GET(
   request: NextRequest,
@@ -36,6 +39,11 @@ export async function PUT(
   try {
     const { id } = await params;
     const body: UpdateServiceRequest = await request.json();
+
+    const invalid = validateServiceRequestBody(body);
+    if (invalid) {
+      return NextResponse.json({ error: invalid }, { status: 400 });
+    }
 
     // Validate domainId if provided
     if (body.domainId) {

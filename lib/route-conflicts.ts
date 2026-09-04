@@ -11,7 +11,7 @@ import {
   routerServiceMatcher,
   wildcardCertRouterName,
 } from "@/lib/traefik-config";
-import { hostTokensOfRule } from "@/lib/route-rule";
+import { hostTokensOfRule, isHostOnlyRule } from "@/lib/route-rule";
 import type {
   RouteConflictRouter,
   RouteConflictsResponse,
@@ -23,6 +23,10 @@ import type {
  * services (deep-link to fix the original instead of duplicating);
  * `internal: true` marks this tool's own cert-trigger routers, which share a
  * service's Host() by design and must not count as external conflicts.
+ * `hostOnly` tells the editor how hard to react to a shared Host(): a router
+ * whose rule is nothing but Host()/HostRegexp() claims the whole hostname
+ * (hard conflict), while one that also matches Path/Header/… only claims a
+ * slice of it (warn). `hosts` are lowercased.
  */
 export async function getRouteConflicts(): Promise<RouteConflictsResponse> {
   if (!isTraefikApiConfigured()) {
@@ -65,9 +69,11 @@ export async function getRouteConflicts(): Promise<RouteConflictsResponse> {
     // service, or a trigger) — never a conflict "outside this tool".
     const internal =
       internalNames.has(bareName) || (!managedServiceId && provider === "http");
+    const rule = r.rule || "";
     return {
       routerName: r.name || "",
-      hosts: hostTokensOfRule(r.rule || ""),
+      hosts: hostTokensOfRule(rule),
+      hostOnly: isHostOnlyRule(rule),
       entryPoints: r.entryPoints || [],
       provider,
       managedServiceId,

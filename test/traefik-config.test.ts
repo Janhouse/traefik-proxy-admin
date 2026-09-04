@@ -76,6 +76,7 @@ vi.mock("@/lib/traefik-api", () => ({
 
 import { __resetEntrypointTlsCacheForTests } from "@/lib/entrypoint-tls";
 import {
+  ambiguousSubdomains,
   certTriggerRouterNames,
   generateServiceIdentifier,
   generateTraefikConfig,
@@ -149,12 +150,39 @@ afterEach(() => vi.unstubAllEnvs());
 /* ── generateServiceIdentifier / serviceRouterNames ────────────────────────── */
 
 describe("generateServiceIdentifier", () => {
-  it("includes the domain in subdomain mode (no cross-domain collisions)", () => {
+  it("keeps the bare subdomain (the legacy name) when it is unique across domains", () => {
     const domain = mkDomain();
-    expect(generateServiceIdentifier(mkService(), domain)).toBe("app-example-com");
+    expect(generateServiceIdentifier(mkService(), domain)).toBe("app");
+    expect(generateServiceIdentifier(mkService(), domain, new Set())).toBe("app");
     expect(
-      generateServiceIdentifier(mkService(), mkDomain({ domain: "other.net" }))
+      generateServiceIdentifier(mkService(), mkDomain({ domain: "other.net" }), new Set(["other"]))
+    ).toBe("app");
+  });
+
+  it("appends the domain only for subdomains that exist under two domains", () => {
+    const ambiguous = new Set(["app"]);
+    expect(generateServiceIdentifier(mkService(), mkDomain(), ambiguous)).toBe("app-example-com");
+    expect(
+      generateServiceIdentifier(mkService(), mkDomain({ domain: "other.net" }), ambiguous)
     ).toBe("app-other-net");
+    // apex/custom never take the suffix
+    expect(
+      generateServiceIdentifier(mkService({ hostnameMode: "apex" }), mkDomain(), ambiguous)
+    ).toBe("example-com");
+  });
+
+  it("ambiguousSubdomains reports subdomains spanning more than one domain (any enabled state)", () => {
+    const d1 = mkDomain();
+    const d2 = mkDomain({ id: "domain-2", domain: "other.net" });
+    const set = ambiguousSubdomains([
+      { service: mkService(), domain: d1 },
+      { service: mkService({ id: "2", enabled: false, domainId: "domain-2" }), domain: d2 },
+      { service: mkService({ id: "3", subdomain: "git" }), domain: d1 },
+      { service: mkService({ id: "4", subdomain: "git" }), domain: d1 }, // same domain twice: not ambiguous
+      { service: mkService({ id: "5", subdomain: "www", hostnameMode: "apex" }), domain: d2 },
+      { service: mkService({ id: "6", subdomain: "www" }), domain: null },
+    ]);
+    expect([...set]).toEqual(["app"]);
   });
 
   it("falls back to 'default' when the subdomain is missing", () => {
@@ -179,20 +207,20 @@ describe("generateServiceIdentifier", () => {
 describe("serviceRouterNames", () => {
   it("returns the base name (plus the collision-suffixed variant) for zero or one entrypoint", () => {
     expect(serviceRouterNames(mkService(), mkDomain())).toEqual([
-      "router-app-example-com",
-      "router-app-example-com-11111111",
+      "router-app",
+      "router-app-11111111",
     ]);
     expect(
       serviceRouterNames(mkService({ entrypoints: '["websecure"]' }), mkDomain())
     ).toEqual([
-      "router-app-example-com",
-      "router-app-example-com-11111111",
+      "router-app",
+      "router-app-11111111",
     ]);
     expect(
       serviceRouterNames(mkService({ entrypoint: "web" }), mkDomain())
     ).toEqual([
-      "router-app-example-com",
-      "router-app-example-com-11111111",
+      "router-app",
+      "router-app-11111111",
     ]);
   });
 
@@ -203,12 +231,12 @@ describe("serviceRouterNames", () => {
         mkDomain()
       )
     ).toEqual([
-      "router-app-example-com",
-      "router-app-example-com-web",
-      "router-app-example-com-websecure",
-      "router-app-example-com-11111111",
-      "router-app-example-com-11111111-web",
-      "router-app-example-com-11111111-websecure",
+      "router-app",
+      "router-app-web",
+      "router-app-websecure",
+      "router-app-11111111",
+      "router-app-11111111-web",
+      "router-app-11111111-websecure",
     ]);
   });
 
@@ -228,7 +256,7 @@ describe("serviceRouterNames", () => {
     const config = await generateTraefikConfig();
     const names = serviceRouterNames(collided, mkDomain());
     const emitted = Object.entries(config.http.routers)
-      .filter(([, r]) => r.service === "service-app-example-com-22222222")
+      .filter(([, r]) => r.service === "service-app-22222222")
       .map(([name]) => name);
     expect(emitted.length).toBeGreaterThan(0);
     for (const name of emitted) {
@@ -244,9 +272,9 @@ describe("routerServiceMatcher", () => {
     const match = routerServiceMatcher([
       { service: mkService({ entrypoints: '["extranet"]' }), domain: mkDomain() },
     ]);
-    expect(match("router-app-example-com")).toBe(mkService().id);
-    expect(match("router-app-example-com-extranet")).toBe(mkService().id);
-    expect(match("router-app-example-com-websecure")).toBe(mkService().id);
+    expect(match("router-app")).toBe(mkService().id);
+    expect(match("router-app-extranet")).toBe(mkService().id);
+    expect(match("router-app-websecure")).toBe(mkService().id);
     expect(match("router-other-example-com")).toBeNull();
     expect(match("wildcard-cert-router-example-com")).toBeNull();
   });
@@ -294,12 +322,12 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
 
     const config = await generateTraefikConfig();
 
-    const web = config.http.routers["router-app-example-com-web"];
-    const secure = config.http.routers["router-app-example-com-websecure"];
+    const web = config.http.routers["router-app-web"];
+    const secure = config.http.routers["router-app-websecure"];
     expect(web).toBeDefined();
     expect(secure).toBeDefined();
     // no un-suffixed base router in the multi-entrypoint case
-    expect(config.http.routers["router-app-example-com"]).toBeUndefined();
+    expect(config.http.routers["router-app"]).toBeUndefined();
 
     expect(web.entryPoints).toEqual(["web"]);
     expect(secure.entryPoints).toEqual(["websecure"]);
@@ -311,8 +339,8 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
 
     // identical rule/service and the EXACT same middlewares array
     expect(web.rule).toBe(secure.rule);
-    expect(web.service).toBe("service-app-example-com");
-    expect(secure.service).toBe("service-app-example-com");
+    expect(web.service).toBe("service-app");
+    expect(secure.service).toBe("service-app");
     expect(web.middlewares).toBe(secure.middlewares);
     expect(web.middlewares).toEqual(["compress"]);
   });
@@ -337,20 +365,20 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     h.state.basicAuthUsers = [{ username: "u", passwordHash: "$h" }];
 
     const config = await generateTraefikConfig();
-    const web = config.http.routers["router-app-example-com-web"];
-    const secure = config.http.routers["router-app-example-com-websecure"];
+    const web = config.http.routers["router-app-web"];
+    const secure = config.http.routers["router-app-websecure"];
 
     expect(web.middlewares).toBe(secure.middlewares); // same array instance
     expect(web.middlewares).toEqual([
       "compress",
-      "auth-shared_link-app-example-com",
-      "basic-auth-app-example-com-sec2sec2",
-      "headers-app-example-com",
+      "auth-shared_link-app",
+      "basic-auth-app-sec2sec2",
+      "headers-app",
       "rate-limit",
     ]);
-    expect(config.http.middlewares!["auth-shared_link-app-example-com"]).toBeDefined();
-    expect(config.http.middlewares!["basic-auth-app-example-com-sec2sec2"]).toBeDefined();
-    expect(config.http.middlewares!["headers-app-example-com"]).toBeDefined();
+    expect(config.http.middlewares!["auth-shared_link-app"]).toBeDefined();
+    expect(config.http.middlewares!["basic-auth-app-sec2sec2"]).toBeDefined();
+    expect(config.http.middlewares!["headers-app"]).toBeDefined();
   });
 
   it("uses the un-suffixed name for a single entrypoint (tls iff the entrypoint is TLS)", async () => {
@@ -360,15 +388,15 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     ];
 
     let config = await generateTraefikConfig();
-    let router = config.http.routers["router-app-example-com"];
+    let router = config.http.routers["router-app"];
     expect(router).toBeDefined();
     expect(router.entryPoints).toEqual(["websecure"]);
     expect(router.tls).toBeDefined();
-    expect(config.http.routers["router-app-example-com-websecure"]).toBeUndefined();
+    expect(config.http.routers["router-app-websecure"]).toBeUndefined();
 
     h.state.joinRows = [{ service: mkService({ entrypoints: '["web"]' }), domain }];
     config = await generateTraefikConfig();
-    router = config.http.routers["router-app-example-com"];
+    router = config.http.routers["router-app"];
     expect(router.entryPoints).toEqual(["web"]);
     expect(router.tls).toBeUndefined();
   });
@@ -381,8 +409,8 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
       { service: mkService({ entrypoints: null, entrypoint: "web" }), domain },
     ];
     let config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"].entryPoints).toEqual(["web"]);
-    expect(config.http.routers["router-app-example-com"].tls).toBeUndefined();
+    expect(config.http.routers["router-app"].entryPoints).toEqual(["web"]);
+    expect(config.http.routers["router-app"].tls).toBeUndefined();
 
     // global default
     h.state.joinRows = [
@@ -390,13 +418,13 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     ];
     h.state.globalConfig.defaultEntrypoint = "websecure";
     config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"].entryPoints).toEqual(["websecure"]);
-    expect(config.http.routers["router-app-example-com"].tls).toBeDefined();
+    expect(config.http.routers["router-app"].entryPoints).toEqual(["websecure"]);
+    expect(config.http.routers["router-app"].tls).toBeDefined();
 
     // nothing anywhere → legacy shape: no entryPoints key, tls always set
     h.state.globalConfig.defaultEntrypoint = undefined;
     config = await generateTraefikConfig();
-    const router = config.http.routers["router-app-example-com"];
+    const router = config.http.routers["router-app"];
     expect("entryPoints" in router).toBe(false);
     expect(router.tls).toBeDefined();
   });
@@ -417,10 +445,10 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     ];
     const config = await generateTraefikConfig();
     expect(
-      config.http.routers["router-app-example-com-web-internal"].tls
+      config.http.routers["router-app-web-internal"].tls
     ).toBeDefined();
     expect(
-      config.http.routers["router-app-example-com-web"].tls
+      config.http.routers["router-app-web"].tls
     ).toBeUndefined();
   });
 
@@ -434,13 +462,13 @@ describe("generateTraefikConfig — per-entrypoint routers", () => {
     ];
     h.state.globalConfig.defaultEntrypoint = "web";
     const config = await generateTraefikConfig();
-    const router = config.http.routers["router-app-example-com"];
+    const router = config.http.routers["router-app"];
     expect(router.entryPoints).toEqual(["web"]);
 
     // without a global default: bound to all entrypoints, legacy tls shape
     h.state.globalConfig.defaultEntrypoint = undefined;
     const config2 = await generateTraefikConfig();
-    const router2 = config2.http.routers["router-app-example-com"];
+    const router2 = config2.http.routers["router-app"];
     expect("entryPoints" in router2).toBe(false);
   });
 });
@@ -453,14 +481,14 @@ describe("generateTraefikConfig — multi default entrypoints", () => {
     h.state.globalConfig.defaultEntrypoints = ["web", "websecure"];
 
     const config = await generateTraefikConfig();
-    const web = config.http.routers["router-app-example-com-web"];
-    const secure = config.http.routers["router-app-example-com-websecure"];
+    const web = config.http.routers["router-app-web"];
+    const secure = config.http.routers["router-app-websecure"];
     expect(web.entryPoints).toEqual(["web"]);
     expect(web.tls).toBeUndefined();
     expect(secure.entryPoints).toEqual(["websecure"]);
     expect(secure.tls).toBeDefined();
     // multi-entrypoint naming contract: no un-suffixed base router
-    expect(config.http.routers["router-app-example-com"]).toBeUndefined();
+    expect(config.http.routers["router-app"]).toBeUndefined();
   });
 
   it("prefers defaultEntrypoints over the legacy single value", async () => {
@@ -471,7 +499,7 @@ describe("generateTraefikConfig — multi default entrypoints", () => {
     h.state.globalConfig.defaultEntrypoints = ["websecure"];
 
     const config = await generateTraefikConfig();
-    const router = config.http.routers["router-app-example-com"];
+    const router = config.http.routers["router-app"];
     expect(router.entryPoints).toEqual(["websecure"]);
   });
 
@@ -499,7 +527,7 @@ describe("generateTraefikConfig — multi default entrypoints", () => {
 });
 
 describe("generateTraefikConfig — managed mode integration", () => {
-  const authMw = "auth-shared_link-app-example-com";
+  const authMw = "auth-shared_link-app";
 
   it("keeps legacy output identical when the new envs are unset", async () => {
     const domain = mkDomain();
@@ -560,13 +588,17 @@ describe("generateTraefikConfig — managed mode integration", () => {
     );
   });
 
-  it("managed mode without ADMIN_PANEL_AUTH emits the route without basicAuth", async () => {
+  it("managed mode without valid ADMIN_PANEL_AUTH refuses to publish the admin route", async () => {
     vi.stubEnv("TRAEFIK_MANAGED", "true");
     h.state.globalConfig.adminPanelDomain = "admin.example.com";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const config = await generateTraefikConfig();
-    expect(config.http.routers["admin-panel"].middlewares).toBeUndefined();
+    expect(config.http.routers["admin-panel"]).toBeUndefined();
+    expect(config.http.services["admin-panel"]).toBeUndefined();
     expect(config.http.middlewares?.["admin-panel-auth"]).toBeUndefined();
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
   });
 
   it("skips the admin route for localhost admin domains", async () => {
@@ -579,6 +611,7 @@ describe("generateTraefikConfig — managed mode integration", () => {
 
   it("strips the port and falls back to the first managed resolver when no domain matches", async () => {
     vi.stubEnv("TRAEFIK_MANAGED", "true");
+    vi.stubEnv("ADMIN_PANEL_AUTH", "admin:$apr1$hash");
     h.state.globalConfig.adminPanelDomain = "panel.other.net:8443";
     h.state.allDomains = [mkDomain()]; // example.com — no match
 
@@ -623,13 +656,13 @@ describe("generateTraefikConfig — identifier uniqueness", () => {
     ];
 
     const config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"]).toBeDefined();
-    expect(config.http.routers["router-app-example-com-deadbeef"]).toBeDefined();
+    expect(config.http.routers["router-app"]).toBeDefined();
+    expect(config.http.routers["router-app-deadbeef"]).toBeDefined();
     expect(
-      config.http.routers["router-app-example-com-deadbeef"].service
-    ).toBe("service-app-example-com-deadbeef");
+      config.http.routers["router-app-deadbeef"].service
+    ).toBe("service-app-deadbeef");
     expect(
-      config.http.services["service-app-example-com-deadbeef"].loadBalancer.servers[0].url
+      config.http.services["service-app-deadbeef"].loadBalancer.servers[0].url
     ).toBe("http://10.0.0.5:9090");
   });
 });
@@ -650,7 +683,7 @@ describe("generateTraefikConfig — match rules", () => {
     h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
 
     const config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"].rule).toBe(
+    expect(config.http.routers["router-app"].rule).toBe(
       "(Host(`app.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/ws`)))"
     );
   });
@@ -663,7 +696,7 @@ describe("generateTraefikConfig — match rules", () => {
     h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
 
     const config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"].rule).toBe(
+    expect(config.http.routers["router-app"].rule).toBe(
       "(Host(`app.example.com`) && PathPrefix(`/api`))"
     );
   });
@@ -677,11 +710,11 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
       { type: "PathPrefix", conn: "AND", value: "/api" },
     ]);
     // legacy columns deliberately disagree with the tree: they still drive the
-    // identifier (router-app-example-com) but must NOT leak into the rule
+    // identifier (router-app) but must NOT leak into the rule
     h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
 
     const config = await generateTraefikConfig();
-    const router = config.http.routers["router-app-example-com"];
+    const router = config.http.routers["router-app"];
     expect(router).toBeDefined();
     expect(router.rule).toBe("(Host(`tree.example.com`) && PathPrefix(`/api`))");
     expect(router.rule).not.toContain("app.example.com");
@@ -710,14 +743,14 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
     h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
 
     const config = await generateTraefikConfig();
-    expect(config.http.routers["router-app-example-com"].rule).toBe(
+    expect(config.http.routers["router-app"].rule).toBe(
       "((Host(`a.example.com`) && PathPrefix(`/x`)) || (Host(`b.example.org`) && PathPrefix(`/y`)))"
     );
   });
 
-  it("resolves free-text hosts; an unknown domainId contributes no hostname (TLS driven by resolved hosts only)", async () => {
+  it("resolves free-text hosts; the tree's resolved hosts drive cert selection", async () => {
     // wildcard off + a cert config covering the free-text host: the tree's
-    // RESOLVED hostnames must drive cert selection, the unresolved Host must not
+    // RESOLVED hostnames must drive cert selection
     const domain = mkDomain({
       useWildcardCert: false,
       certificateConfigs: JSON.stringify([
@@ -726,7 +759,7 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
     });
     const matchRules = JSON.stringify([
       { type: "Host", conn: "AND", value: "ext.example.org" },
-      { type: "Host", conn: "OR", domainId: "missing-domain", sub: "x" },
+      { type: "Host", conn: "OR", domainId: "domain-1", sub: "x" },
     ]);
     const service = mkService({
       matchRules,
@@ -740,12 +773,60 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
     const config = await generateTraefikConfig();
     const router = config.http.routers["router-ext-example-org"];
     expect(router).toBeDefined();
-    // the unresolved Host stays in the rule as a never-matching Host(``)
-    expect(router.rule).toBe("(Host(`ext.example.org`) || Host(``))");
+    expect(router.rule).toBe("(Host(`ext.example.org`) || Host(`x.example.com`))");
     expect(router.tls).toEqual({
       certResolver: "le",
       domains: [{ main: "ext.example.org", sans: undefined }],
     });
+  });
+
+  it("skips (with a warning) a service whose rule would carry an empty argument, e.g. a Host on a deleted domain", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const domain = mkDomain();
+      const matchRules = JSON.stringify([
+        { type: "Host", conn: "AND", value: "ext.example.org" },
+        { type: "Host", conn: "OR", domainId: "missing-domain", sub: "x" },
+      ]);
+      const service = mkService({
+        matchRules,
+        hostnameMode: "custom",
+        customHostnames: '["ext.example.org"]',
+      });
+      h.state.joinRows = [{ service, domain }];
+
+      const config = await generateTraefikConfig();
+      // never emit a router with Host(``) — nothing registered for the service
+      expect(Object.keys(config.http.routers).filter((n) => n.startsWith("router-"))).toEqual([]);
+      expect(Object.keys(config.http.services).filter((n) => n.startsWith("service-"))).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("empty matcher argument"));
+
+      // same for an empty PathPrefix(``) that slipped into storage
+      warn.mockClear();
+      h.state.joinRows = [
+        { service: mkService({ matchRules: '[{"type":"PathPrefix","conn":"AND","value":""}]' }), domain },
+      ];
+      const config2 = await generateTraefikConfig();
+      expect(config2.http.routers["router-app"]).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("empty matcher argument"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("never emits an injected/unknown matcher type into the rule", async () => {
+    const domain = mkDomain();
+    const matchRules = JSON.stringify([
+      { type: "Host(`evil.example.org`) || PathPrefix", conn: "AND", value: "/" },
+      { type: "PathPrefix", conn: "AND", value: "/api" },
+    ]);
+    h.state.joinRows = [{ service: mkService({ matchRules }), domain }];
+
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["router-app"];
+    expect(router).toBeDefined();
+    expect(router.rule).toBe("(Host(`app.example.com`) && PathPrefix(`/api`))");
+    expect(router.rule).not.toContain("evil");
   });
 
   it("skips a service whose only Host references an unknown domain", async () => {
@@ -784,8 +865,8 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
     h.state.globalConfig.globalMiddlewares = ["compress"];
 
     const config = await generateTraefikConfig();
-    const web = config.http.routers["router-app-example-com-web"];
-    const secure = config.http.routers["router-app-example-com-websecure"];
+    const web = config.http.routers["router-app-web"];
+    const secure = config.http.routers["router-app-websecure"];
     expect(web).toBeDefined();
     expect(secure).toBeDefined();
     expect(web.rule).toBe("(Host(`app.example.com`) && PathPrefix(`/api`))");
@@ -810,12 +891,129 @@ describe("generateTraefikConfig — self-contained Host trees", () => {
     h.state.allDomains = [domain];
 
     const config = await generateTraefikConfig();
-    const router = config.http.routers["router-app-example-com"];
+    const router = config.http.routers["router-app"];
     expect(router.tls).toEqual({
       certResolver: "letsencrypt",
       domains: [{ main: "example.com", sans: ["*.example.com"] }],
     });
     expect(config.http.routers["wildcard-cert-router-example-com"]).toBeUndefined();
+  });
+});
+
+describe("generateTraefikConfig — legacy names survive the upgrade", () => {
+  it("a single-domain estate keeps router-<sub> / service-<sub> / auth-sso-<sub> exactly as main named them", async () => {
+    const domain = mkDomain();
+    h.state.joinRows = [
+      { service: mkService(), domain },
+      { service: mkService({ id: "22222222-aaaa-bbbb-cccc-dddddddddddd", subdomain: "git" }), domain },
+      { service: mkService({ id: "33333333-aaaa-bbbb-cccc-dddddddddddd", hostnameMode: "apex", subdomain: null }), domain },
+    ];
+    h.state.allDomains = [domain];
+    h.state.securityConfigs = [{ id: "sec1sec1-0000", securityType: "sso", config: "{}" }];
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["router-app"]).toBeDefined();
+    expect(config.http.routers["router-app"].service).toBe("service-app");
+    expect(config.http.routers["router-app"].middlewares).toEqual(["auth-sso-app"]);
+    expect(config.http.middlewares!["auth-sso-app"]).toBeDefined();
+    expect(config.http.routers["router-git"].service).toBe("service-git");
+    expect(config.http.routers["router-example-com"].service).toBe("service-example-com");
+    expect(Object.keys(config.http.routers).some((n) => n.includes("app-example-com"))).toBe(false);
+  });
+
+  it("only the subdomain that exists under two domains gets the domain suffix", async () => {
+    const d1 = mkDomain();
+    const d2 = mkDomain({ id: "domain-2", domain: "other.net" });
+    h.state.joinRows = [
+      { service: mkService(), domain: d1 },
+      { service: mkService({ id: "22222222-aaaa-bbbb-cccc-dddddddddddd", domainId: "domain-2" }), domain: d2 },
+      { service: mkService({ id: "33333333-aaaa-bbbb-cccc-dddddddddddd", subdomain: "git" }), domain: d1 },
+    ];
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["router-app-example-com"].service).toBe("service-app-example-com");
+    expect(config.http.routers["router-app-other-net"].service).toBe("service-app-other-net");
+    expect(config.http.routers["router-app"]).toBeUndefined();
+    expect(config.http.routers["router-git"].service).toBe("service-git"); // untouched
+  });
+
+  it("a DISABLED twin on another domain still makes the subdomain ambiguous (names don't flip on toggle)", async () => {
+    const d1 = mkDomain();
+    const d2 = mkDomain({ id: "domain-2", domain: "other.net" });
+    h.state.joinRows = [
+      { service: mkService(), domain: d1 },
+      { service: mkService({ id: "22222222-aaaa-bbbb-cccc-dddddddddddd", domainId: "domain-2", enabled: false }), domain: d2 },
+    ];
+
+    const config = await generateTraefikConfig();
+    expect(config.http.routers["router-app-example-com"]).toBeDefined();
+    expect(config.http.routers["router-app"]).toBeUndefined();
+    expect(config.http.routers["router-app-other-net"]).toBeUndefined(); // disabled: not emitted
+    // and the matcher agrees with generation
+    const match = routerServiceMatcher(h.state.joinRows as Parameters<typeof routerServiceMatcher>[0]);
+    expect(match("router-app-example-com")).toBe(mkService().id);
+    expect(match("router-app")).toBeNull();
+  });
+});
+
+describe("generateTraefikConfig — single-entrypoint TLS gating", () => {
+  const single = async (ep: string) => {
+    h.state.joinRows = [{ service: mkService({ entrypoints: JSON.stringify([ep]) }), domain: mkDomain() }];
+    const config = await generateTraefikConfig();
+    return config.http.routers["router-app"];
+  };
+  const multi = async (eps: string[]) => {
+    h.state.joinRows = [{ service: mkService({ entrypoints: JSON.stringify(eps) }), domain: mkDomain() }];
+    const config = await generateTraefikConfig();
+    return Object.fromEntries(eps.map((ep) => [ep, config.http.routers[`router-app-${ep}`]]));
+  };
+
+  it("with NO API info a single-entrypoint router keeps legacy tls regardless of its name", async () => {
+    h.state.entrypoints = []; // API unreachable/unconfigured → no verdict
+    for (const ep of ["websecure", "web", "web-internal", "http-alt", "internal"]) {
+      const router = await single(ep);
+      expect(router.entryPoints).toEqual([ep]);
+      expect(router.tls, ep).toBeDefined();
+    }
+  });
+
+  it("with NO API info the multi-entrypoint fan-out may use the name heuristic", async () => {
+    h.state.entrypoints = [];
+    const routers = await multi(["websecure", "web", "web-internal", "http-alt", "internal"]);
+    expect(routers["websecure"].tls).toBeDefined();
+    expect(routers["web"].tls).toBeUndefined();
+    expect(routers["web-internal"].tls).toBeUndefined();
+    expect(routers["http-alt"].tls).toBeUndefined();
+    expect(routers["internal"].tls).toBeDefined(); // unknown name → legacy default
+  });
+
+  it("authoritative API info (port / default TLS) drops or keeps tls on a single-entrypoint router", async () => {
+    h.state.entrypoints = [
+      { name: "web", address: ":80" },
+      { name: "http-alt", address: ":8080" },
+      { name: "web-internal", address: ":9000", http: { tls: {} } },
+      { name: "custom", address: ":9443" }, // unknown port: no verdict
+    ];
+    expect((await single("web")).tls).toBeUndefined();
+    expect((await single("http-alt")).tls).toBeUndefined();
+    expect((await single("web-internal")).tls).toBeDefined();
+    expect((await single("custom")).tls).toBeDefined(); // legacy default
+    expect((await single("nothing-known")).tls).toBeDefined();
+  });
+
+  it("a lost API keeps the last good verdicts (stale-while-error) instead of flipping tls", async () => {
+    h.state.entrypoints = [{ name: "web", address: ":80" }];
+    expect((await single("web")).tls).toBeUndefined();
+    // the cache is warm; make the API fail and expire the success TTL
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(31_000);
+      const { getEntrypoints } = await import("@/lib/traefik-api");
+      vi.mocked(getEntrypoints).mockRejectedValueOnce(new Error("down"));
+      expect((await single("web")).tls).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

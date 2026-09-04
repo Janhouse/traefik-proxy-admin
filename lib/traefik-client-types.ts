@@ -143,7 +143,12 @@ export interface TrafficMetrics {
 
 export interface MetricsResponse {
   configured: boolean;
+  /** True when there is usable data: stored samples inside the window, or a
+   * successful scrape that saw router-labelled series. */
   available: boolean;
+  /** Whether the most recent scrape of Traefik /metrics succeeded. A single
+   * failed scrape flips this while `available` stays true on stored rows. */
+  lastScrapeOk: boolean;
   window: number; // seconds
   generatedAt: string;
   services: Record<string, TrafficMetrics>; // keyed by admin service id
@@ -153,7 +158,11 @@ export interface MetricsResponse {
 
 export interface RouteConflictRouter {
   routerName: string; // e.g. "grafana@file"
-  hosts: string[]; // Host() tokens parsed from the rule
+  hosts: string[]; // Host() tokens parsed from the rule, lowercased
+  /** true when the rule is ONLY Host()/HostRegexp() joined by && / || — the
+   * router claims whole hostnames (hard conflict on a shared host); false
+   * when it also matches Path, Header, Query, Method, ClientIP… (warn only). */
+  hostOnly: boolean;
   entryPoints: string[];
   provider: string;
   managedServiceId: string | null; // our service id if this router is ours
@@ -170,6 +179,9 @@ export interface RuntimeResponse {
   configured: boolean;
   reachable: boolean;
   error?: string;
+  /** Secondary Traefik API calls that failed while the core ones succeeded;
+   * the affected lists are empty but the rest of the snapshot is real. */
+  warnings?: string[];
   syncedAt: string;
   version?: { version?: string; codename?: string };
   counts: {

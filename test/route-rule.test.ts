@@ -10,6 +10,9 @@ import {
   hostsInTree,
   insertNode,
   isGroup,
+  isHostOnlyRule,
+  isMatchType,
+  validateMatchRulesPayload,
   moveNode,
   parseEntrypoints,
   parseMatchRules,
@@ -224,6 +227,25 @@ describe("parseMatchRules", () => {
     expect(isGroup(nodes[1])).toBe(true);
   });
 
+  it("drops nodes with an unknown or injected matcher type", () => {
+    const nodes = parseMatchRules(
+      JSON.stringify([
+        { type: "Host(`x`) || PathPrefix", conn: "AND", value: "/" },
+        { type: "pathprefix", conn: "AND", value: "/api" }, // case matters
+        { type: "Path", conn: "AND", value: "/ok" },
+        { kind: "group", conn: "OR", children: [{ type: "Evil", conn: "AND", value: "x" }] },
+      ])
+    );
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toMatchObject({ type: "Path", value: "/ok" });
+    expect(countMatchers(nodes)).toBe(1);
+    // and the assembled rule never carries the injected text
+    expect(assembleRule("a.com", nodes)).toBe("(Host(`a.com`) && Path(`/ok`))");
+    expect(isMatchType("Host")).toBe(true);
+    expect(isMatchType("Host(`x`)")).toBe(false);
+    expect(isMatchType(42)).toBe(false);
+  });
+
   it("refuses groups nested beyond MAX_GROUP_DEPTH", () => {
     let node: unknown = { type: "Path", conn: "AND", value: "/x" };
     for (let i = 0; i < 10; i++) {
@@ -264,6 +286,113 @@ describe("hostToken / hostTokensOfRule", () => {
       g("OR", m("Host", "OR", "b.com"), m("PathPrefix", "AND", "/x")),
     ]);
     expect(hostTokensOfRule(rule)).toEqual(["a.com", "b.com"]);
+  });
+
+  it("handles v2 multi-arg Host(), whitespace, case, empties and HostRegexp", () => {
+    expect(hostTokensOfRule("Host(`a.com`, `B.com`)")).toEqual(["a.com", "b.com"]);
+    expect(hostTokensOfRule("Host(`a.com`,`b.com`,`c.com`)")).toEqual(["a.com", "b.com", "c.com"]);
+    expect(hostTokensOfRule("Host( `a.com` )")).toEqual(["a.com"]);
+    expect(hostTokensOfRule("Host (`a.com`) && Path(`/x`)")).toEqual(["a.com"]);
+    expect(hostTokensOfRule("Host(`App.Example.COM`)")).toEqual(["app.example.com"]);
+    expect(hostTokensOfRule("Host(``) || Host(`a.com`)")).toEqual(["a.com"]);
+    expect(hostTokensOfRule("HostRegexp(`^.+\\.example\\.com$`)")).toEqual([]);
+    expect(hostTokensOfRule("HostSNI(`a.com`)")).toEqual([]);
+    expect(hostTokensOfRule("PathPrefix(`/Host(`)")).toEqual([]);
+    expect(hostTokensOfRule("")).toEqual([]);
+  });
+});
+
+describe("isHostOnlyRule", () => {
+  it("is true only for Host()/HostRegexp() joined by && / ||", () => {
+    expect(isHostOnlyRule("Host(`a.com`)")).toBe(true);
+    expect(isHostOnlyRule("Host(`a.com`) || Host(`b.com`)")).toBe(true);
+    expect(isHostOnlyRule("(Host(`a.com`, `b.com`)) && HostRegexp(`^x\\.a\\.com$`)")).toBe(true);
+    expect(isHostOnlyRule("HostRegexp(`^.+\\.a\\.com$`)")).toBe(true);
+    expect(isHostOnlyRule(" Host( `a.com` ) ")).toBe(true);
+  });
+
+  it("is false when anything narrows the host, or nothing is a host", () => {
+    expect(isHostOnlyRule("Host(`a.com`) && PathPrefix(`/api`)")).toBe(false);
+    expect(isHostOnlyRule("(Host(`a.com`)) && Path(`/.well-known/traefik-cert-trigger`)")).toBe(false);
+    expect(isHostOnlyRule("Host(`a.com`) && Header(`X-Env`, `staging`)")).toBe(false);
+    expect(isHostOnlyRule("Host(`a.com`) && Query(`debug`, `1`)")).toBe(false);
+    expect(isHostOnlyRule("Host(`a.com`) && ClientIP(`10.0.0.0/8`)")).toBe(false);
+    expect(isHostOnlyRule("Host(`a.com`) && Method(`GET`)")).toBe(false);
+    expect(isHostOnlyRule("!Host(`a.com`)")).toBe(false);
+    expect(isHostOnlyRule("HostSNI(`a.com`)")).toBe(false);
+    expect(isHostOnlyRule("PathPrefix(`/only`)")).toBe(false);
+    expect(isHostOnlyRule("")).toBe(false);
+    // a Path arg containing the word Host must not fool it
+    expect(isHostOnlyRule("PathPrefix(`/Host`)")).toBe(false);
+  });
+});
+
+describe("validateMatchRulesPayload", () => {
+  const ok = (nodes: unknown[]) => expect(validateMatchRulesPayload(nodes)).toBeNull();
+  const bad = (nodes: unknown[], msg: string | RegExp) =>
+    expect(validateMatchRulesPayload(nodes)).toMatch(msg);
+
+  it("accepts absent/empty payloads and well-formed trees", () => {
+    expect(validateMatchRulesPayload(undefined)).toBeNull();
+    expect(validateMatchRulesPayload(null)).toBeNull();
+    ok([]);
+    ok([
+      { type: "Host", conn: "AND", value: "app.example.com" },
+      { type: "Host", conn: "OR", domainId: "d1", sub: "app" },
+      { type: "Host", conn: "OR", domainId: "d1", apex: true },
+      { type: "Host", conn: "OR", value: "*.example.com" },
+      { type: "PathPrefix", conn: "AND", value: "/api" },
+      { type: "Path", conn: "AND", value: "/healthz" },
+      { type: "PathRegexp", conn: "AND", value: "^/v[0-9]+/" },
+      { type: "Header", conn: "AND", key: "X-Env", value: "staging" },
+      { type: "Query", conn: "AND", key: "debug", value: "1" },
+      { type: "Method", conn: "AND", method: "POST" },
+      { type: "Method", conn: "AND" },
+      { type: "ClientIP", conn: "AND", value: "10.0.0.0/24" },
+      { type: "HostRegexp", conn: "AND", value: "^.+\\.example\\.com$" },
+      { kind: "group", conn: "OR", children: [{ type: "PathPrefix", conn: "AND", value: "/ws" }] },
+    ]);
+  });
+
+  it("rejects the rule-injection payload and unknown types", () => {
+    bad([{ type: "Host(`x`) || PathPrefix", conn: "AND", value: "/" }], /Unknown match rule type/);
+    bad([{ type: "pathprefix", conn: "AND", value: "/api" }], /Unknown match rule type/);
+    bad([{ conn: "AND", value: "/api" }], /Unknown match rule type/);
+    bad([{ kind: "group", conn: "AND", children: [{ type: "Evil", conn: "AND" }] }], /Unknown match rule type/);
+    expect(validateMatchRulesPayload("nope")).toMatch(/must be an array/);
+    bad([42], /Invalid match rule/);
+    bad([{ kind: "group", conn: "AND", children: "nope" }], /no children/);
+  });
+
+  it("rejects empty matcher arguments", () => {
+    bad([{ type: "PathPrefix", conn: "AND", value: "" }], /PathPrefix rule needs a path/);
+    bad([{ type: "PathPrefix", conn: "AND" }], /PathPrefix rule needs a path/);
+    bad([{ type: "Path", conn: "AND", value: "   " }], /Path rule needs a path/);
+    bad([{ type: "Host", conn: "AND", value: "" }], /Host rule needs a hostname/);
+    bad([{ type: "Host", conn: "AND", domainId: "d1", sub: "" }], /subdomain or the apex/);
+    bad([{ type: "PathRegexp", conn: "AND", value: "" }], /PathRegexp rule needs a value/);
+    bad([{ type: "HostRegexp", conn: "AND" }], /HostRegexp rule needs a value/);
+    bad([{ type: "ClientIP", conn: "AND", value: "" }], /ClientIP rule needs a value/);
+    bad([{ type: "Header", conn: "AND", key: "", value: "x" }], /Header rule needs a key/);
+    bad([{ type: "Header", conn: "AND", key: "X", value: "" }], /Header rule needs a value/);
+    bad([{ type: "Query", conn: "AND", value: "1" }], /Query rule needs a key/);
+  });
+
+  it("rejects paths not starting with / and hosts that are not hostnames", () => {
+    bad([{ type: "PathPrefix", conn: "AND", value: "api" }], /must start with "\/"/);
+    bad([{ type: "Path", conn: "AND", value: "healthz" }], /must start with "\/"/);
+    bad([{ type: "Host", conn: "AND", value: "a`) || PathPrefix(`/" }], /Invalid hostname/);
+    bad([{ type: "Host", conn: "AND", value: "app.example.com/path" }], /Invalid hostname/);
+    bad([{ type: "Host", conn: "AND", value: "app example.com" }], /Invalid hostname/);
+    bad([{ type: "Host", conn: "AND", domainId: "d1", sub: "a`b" }], /Invalid subdomain/);
+    bad([{ type: "Method", conn: "AND", method: "GET`)" }], /Invalid HTTP method/);
+  });
+
+  it("reports nested problems inside groups", () => {
+    bad(
+      [{ kind: "group", conn: "AND", children: [{ kind: "group", conn: "OR", children: [{ type: "PathPrefix", conn: "AND", value: "" }] }] }],
+      /PathPrefix rule needs a path/
+    );
   });
 });
 

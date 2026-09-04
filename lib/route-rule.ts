@@ -93,6 +93,15 @@ export function matcherDef(type: MatchType): MatcherTypeDef {
   return MATCHER_TYPES.find((t) => t.key === type) || MATCHER_TYPES[0];
 }
 
+const MATCH_TYPE_SET = new Set<string>(MATCHER_TYPES.map((t) => t.key));
+
+/** Whether a raw value names one of the supported matcher types. The type is
+ * emitted verbatim as the matcher function name, so this whitelist is what
+ * keeps a crafted `type` from injecting rule syntax. */
+export function isMatchType(type: unknown): type is MatchType {
+  return typeof type === "string" && MATCH_TYPE_SET.has(type);
+}
+
 export type HostnameMode = "subdomain" | "apex" | "custom";
 
 /** The primary Host() argument from the sub/apex composer. */
@@ -260,13 +269,53 @@ export function tokenizeRule(rule: string): RuleToken[] {
   return tokens;
 }
 
-/** Extract the Host(`…`) hostnames from a rule string (for conflict checks). */
+/**
+ * Extract the Host(`…`) hostnames from a rule string (for conflict checks).
+ * Handles the v2 multi-arg form Host(`a`, `b`), whitespace inside the parens,
+ * and lowercases every host (hostnames are case-insensitive). Empty args are
+ * skipped. HostRegexp() is NOT a Host() and contributes nothing.
+ */
 export function hostTokensOfRule(rule: string): string[] {
   const out: string[] = [];
-  const re = /Host\(`([^`]+)`\)/g;
+  // \bHost so "HostRegexp(" / "HostSNI(" never match; the args are backtick
+  // strings separated by commas/whitespace only.
+  const re = /\bHost\s*\(\s*((?:`[^`]*`\s*(?:,\s*)?)*)\)/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(rule)) !== null) out.push(m[1]);
+  while ((m = re.exec(rule)) !== null) {
+    const args = m[1].match(/`[^`]*`/g) || [];
+    for (const arg of args) {
+      const host = arg.slice(1, -1).trim().toLowerCase();
+      if (host) out.push(host);
+    }
+  }
   return out;
+}
+
+/**
+ * True when a rule consists SOLELY of Host()/HostRegexp() matchers joined by
+ * && / || (parens allowed) — i.e. it claims whole hostnames. Anything else
+ * (Path*, Header*, Query, Method, ClientIP, negation, unparseable text) makes
+ * it false: such a router only claims a slice of the host, so sharing its
+ * Host() is a warning rather than a hard conflict.
+ */
+export function isHostOnlyRule(rule: string): boolean {
+  // Drop the backtick-quoted arguments; only the structure matters.
+  const structure = rule.replace(/`[^`]*`/g, "");
+  const re = /\s+|&&|\|\||[(),]|[A-Za-z]+/y;
+  let sawHost = false;
+  let pos = 0;
+  while (pos < structure.length) {
+    re.lastIndex = pos;
+    const m = re.exec(structure);
+    if (!m) return false; // "!" or any other token we don't understand
+    const tok = m[0];
+    if (/^[A-Za-z]+$/.test(tok)) {
+      if (tok !== "Host" && tok !== "HostRegexp") return false;
+      sawHost = true;
+    }
+    pos += tok.length;
+  }
+  return sawHost;
 }
 
 /* ── JSON (de)serialization helpers (tolerant) ────────────────────────────── */
@@ -294,9 +343,12 @@ function parseNode(raw: unknown, depth: number): RuleNode | null {
         .filter((c): c is RuleNode => c !== null),
     };
   }
-  if (typeof o.type !== "string") return null;
+  // Unknown matcher types are dropped: the type is emitted verbatim as the
+  // matcher function name, so anything off the whitelist is either a typo
+  // (Traefik would reject the router) or injected rule syntax.
+  if (!isMatchType(o.type)) return null;
   return {
-    type: o.type as MatchType,
+    type: o.type,
     conn: o.conn === "OR" ? "OR" : "AND",
     value: typeof o.value === "string" ? o.value : undefined,
     key: typeof o.key === "string" ? o.key : undefined,
@@ -319,6 +371,89 @@ export function parseMatchRules(json?: string | null): RuleNode[] {
       .filter((m): m is RuleNode => m !== null);
   } catch {
     return [];
+  }
+}
+
+/* ── Request validation (API layer) ───────────────────────────────────────── */
+
+/** Hostnames as accepted in a free-text Host(): labels, dots, dashes and `*`.
+ * Anything else (backticks, spaces, parens, slashes…) is rejected outright. */
+const HOST_VALUE_RE = /^[A-Za-z0-9*][A-Za-z0-9.*-]*$/;
+const METHOD_RE = /^[A-Za-z]+$/;
+
+/**
+ * Validate a RAW (untrusted) matchRules payload before it is stored. Returns a
+ * human-readable error, or null when the tree is acceptable. Checks the raw
+ * objects rather than the parsed tree so unknown types are REJECTED (parseNode
+ * silently drops them, which would let a bad request save a lossy tree).
+ *
+ * Rules: known `type`; matchers that take an argument must have a non-empty
+ * one (Traefik drops a router with PathPrefix(``)); Path/PathPrefix must start
+ * with "/"; free-text Host values must look like hostnames; domain-backed
+ * Hosts need the apex flag or a subdomain; Header/HeaderRegexp/Query need a key.
+ */
+export function validateMatchRulesPayload(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return "matchRules must be an array";
+  return validateRawNodes(raw, 0);
+}
+
+function validateRawNodes(nodes: unknown[], depth: number): string | null {
+  for (const node of nodes) {
+    const err = validateRawNode(node, depth);
+    if (err) return err;
+  }
+  return null;
+}
+
+function validateRawNode(raw: unknown, depth: number): string | null {
+  if (!raw || typeof raw !== "object") return "Invalid match rule";
+  const o = raw as Record<string, unknown>;
+  if (o.kind === "group") {
+    if (depth >= MAX_GROUP_DEPTH) return "Match rule groups are nested too deeply";
+    if (!Array.isArray(o.children)) return "Match rule group has no children";
+    return validateRawNodes(o.children, depth + 1);
+  }
+  if (!isMatchType(o.type)) {
+    return `Unknown match rule type: ${String(o.type).slice(0, 40)}`;
+  }
+  const type = o.type;
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const value = str(o.value);
+  switch (type) {
+    case "Host": {
+      if (typeof o.domainId === "string" && o.domainId) {
+        if (o.apex === true) return null;
+        const sub = str(o.sub);
+        if (!sub) return "Host rule needs a subdomain or the apex";
+        if (!HOST_VALUE_RE.test(sub)) return `Invalid subdomain: ${sub}`;
+        return null;
+      }
+      if (!value) return "Host rule needs a hostname";
+      if (!HOST_VALUE_RE.test(value)) return `Invalid hostname: ${value}`;
+      return null;
+    }
+    case "Path":
+    case "PathPrefix":
+      if (!value) return `${type} rule needs a path`;
+      if (!value.startsWith("/")) return `${type} must start with "/": ${value}`;
+      return null;
+    case "PathRegexp":
+    case "HostRegexp":
+    case "ClientIP":
+      if (!value) return `${type} rule needs a value`;
+      return null;
+    case "Header":
+    case "HeaderRegexp":
+    case "Query":
+      if (!str(o.key)) return `${type} rule needs a key`;
+      if (!value) return `${type} rule needs a value`;
+      return null;
+    case "Method": {
+      const method = str(o.method);
+      if (method && !METHOD_RE.test(method)) return `Invalid HTTP method: ${method}`;
+      return null;
+    }
   }
 }
 

@@ -2,9 +2,10 @@ import type { Service } from "@/components/service-table";
 import { parseEntrypoints } from "@/lib/route-rule";
 
 /** Entrypoints for a service. A non-null `entrypoints` column owns the truth
- * even when it parses empty ("[]" = none selected) — only null rows (pre-array)
- * fall back to the legacy single. Mirrors resolveServiceEntrypoints on the
- * server so the UI never resurrects a deselected entrypoint. */
+ * even when it parses empty — only null rows fall back to the legacy single.
+ * The API stores "none selected" as null AND clears the legacy column, so both
+ * shapes resolve to []. Mirrors resolveServiceEntrypoints on the server so the
+ * UI never resurrects a deselected entrypoint. */
 export function serviceEntrypoints(service: Service): string[] {
   if (service.entrypoints !== null && service.entrypoints !== undefined) {
     return parseEntrypoints(service.entrypoints);
