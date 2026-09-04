@@ -9,7 +9,9 @@
 # Security model: only Traefik's :80/:443 are published. The panel (3000)
 # and the Traefik API (8080) stay on the internal network; the panel is
 # reached through Traefik's auto-generated admin route, protected by
-# basicAuth from ADMIN_PANEL_AUTH.
+# basicAuth from ADMIN_PANEL_AUTH. The wrapper authenticates to the panel's
+# credential endpoint with MANAGED_WRAPPER_TOKEN (plain HTTP, internal
+# network only).
 name: traefik-managed
 
 services:
@@ -42,11 +44,17 @@ services:
       TRAEFIK_MANAGED: "true"
       TRAEFIK_API_URL: http://traefik:8080
       PANEL_INTERNAL_URL: http://traefik-configurator:3000
-      ADMIN_PANEL_AUTH: ${ADMIN_PANEL_AUTH:-}
+      # Required: without it the panel route would be published unauthenticated.
+      ADMIN_PANEL_AUTH: ${ADMIN_PANEL_AUTH:?set ADMIN_PANEL_AUTH in .env}
+      # Optional bootstrap: seeds the Admin Panel Domain on first start so the
+      # admin route exists before you can log in (a value set in the UI wins).
+      ADMIN_PANEL_DOMAIN: ${ADMIN_PANEL_DOMAIN:-}
       # Encrypts DNS-provider credentials at rest in the file below. Required
       # so credentials set in the UI can't be read off disk without the key.
       MANAGED_SECRETS_KEY: ${MANAGED_SECRETS_KEY:?set MANAGED_SECRETS_KEY in .env}
       MANAGED_SECRETS_FILE: /data/managed-secrets.enc
+      # Shared secret the Traefik wrapper must present to read credentials.
+      MANAGED_WRAPPER_TOKEN: ${MANAGED_WRAPPER_TOKEN:?set MANAGED_WRAPPER_TOKEN in .env}
     volumes:
       - panel_data:/data # encrypted managed-credentials file
     depends_on:
@@ -63,9 +71,13 @@ services:
       # 8080 (API/dashboard) deliberately NOT published — internal only.
     volumes:
       - ./docker/managed/traefik-wrapper.sh:/usr/local/bin/traefik-wrapper.sh:ro
-      - traefik_data:/data # acme-<resolver>.json certificate storage
+      - traefik_data:/data # acme-<resolver>.json certificate storage + last-good config
+    # The wrapper writes the plaintext credential env to /run — keep it in RAM.
+    tmpfs:
+      - /run
     environment:
       PANEL_URL: http://traefik-configurator:3000
+      MANAGED_WRAPPER_TOKEN: ${MANAGED_WRAPPER_TOKEN:?set MANAGED_WRAPPER_TOKEN in .env}
       # DNS-challenge provider credentials are best set in the admin panel
       # (Config → Managed Traefik → DNS provider credentials): they're stored
       # write-only and injected here by the wrapper, so they never need to live

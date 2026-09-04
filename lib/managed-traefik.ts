@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { stringify } from "yaml";
 import type {
   ManagedCertResolver,
@@ -143,13 +143,16 @@ export function serializeSecretsEnv(secrets: Record<string, string>): string {
   );
 }
 
-/** Host portion (lowercased, no port) of an authority like
- * "admin.example.com:443" or "[::1]:3000". */
+/** Host portion (lowercased, no port, no trailing dot) of an authority like
+ * "admin.example.com:443", "admin.example.com." or "[::1]:3000". Traefik's
+ * Host() matcher ignores a trailing dot but forwards the header verbatim, so
+ * the FQDN form must compare equal to the bare name. */
 export function hostOnly(authority: string | null | undefined): string {
   if (!authority) return "";
   const a = authority.trim().toLowerCase();
   const m = a.match(/^(\[[^\]]+\]|[^:]+)(?::\d+)?$/);
-  return m ? m[1] : a;
+  const host = m ? m[1] : a;
+  return host.startsWith("[") ? host : host.replace(/\.+$/, "");
 }
 
 /**
@@ -173,4 +176,38 @@ export function isPublicDomainRequest(
     hostOnly(headers.get("host")) === pub ||
     hostOnly(headers.get("x-forwarded-host")) === pub
   );
+}
+
+/* ── Wrapper bearer token ─────────────────────────────────────────────────── */
+
+/** Shared secret between the panel and the Traefik wrapper (compose passes
+ * MANAGED_WRAPPER_TOKEN to both). Trimmed; null when unset/blank. */
+export function wrapperToken(): string | null {
+  const raw = process.env.MANAGED_WRAPPER_TOKEN?.trim();
+  return raw ? raw : null;
+}
+
+/** Constant-time equality of two strings. Both sides are hashed first so
+ * neither the comparison nor a length mismatch leaks anything about the
+ * expected token. */
+export function safeEqualStrings(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
+}
+
+/**
+ * True when the request carries `Authorization: Bearer <MANAGED_WRAPPER_TOKEN>`.
+ * False when the token isn't configured (callers must fail closed — in
+ * managed mode the env var is required precisely so the credential endpoint
+ * can never be open). The Host heuristic (`isPublicDomainRequest`) stays as
+ * defense in depth; this is the actual gate.
+ */
+export function isAuthorizedWrapperRequest(headers: Headers): boolean {
+  const expected = wrapperToken();
+  if (!expected) return false;
+  const auth = headers.get("authorization") ?? "";
+  const m = auth.match(/^Bearer\s+(\S+)\s*$/i);
+  if (!m) return false;
+  return safeEqualStrings(m[1], expected);
 }

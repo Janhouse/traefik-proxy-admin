@@ -6,12 +6,15 @@ import {
   buildStaticConfigObject,
   hashStaticConfig,
   hostOnly,
+  isAuthorizedWrapperRequest,
   isManagedMode,
   isPublicDomainRequest,
   panelInternalUrl,
   parseAdminPanelAuthUsers,
+  safeEqualStrings,
   serializeSecretsEnv,
   stringifyStaticConfig,
+  wrapperToken,
 } from "@/lib/managed-traefik";
 import {
   applySecretEdits,
@@ -196,6 +199,112 @@ describe("validateManagedStaticConfig", () => {
       /needs a DNS provider/
     );
   });
+
+  it("rejects malformed acme emails", () => {
+    for (const email of ["not-an-email", "a@b", "a b@c.d", "@c.d", "a@"]) {
+      reject({ ...valid, certResolvers: [{ name: "le", email, challenge: "tlsChallenge" }] }, /email/);
+    }
+  });
+
+  it("dnsProvider must be a catalog code or a lego-shaped custom code", () => {
+    const dns = (dnsProvider: string): ManagedStaticConfig => ({
+      ...valid,
+      certResolvers: [{ name: "le", email: "a@b.c", challenge: "dnsChallenge", dnsProvider }],
+    });
+    expect(validateManagedStaticConfig(dns("cloudflare")).ok).toBe(true);
+    // "Other (custom)" path: any lowercase alphanumeric lego code is accepted
+    expect(validateManagedStaticConfig(dns("exoscale")).ok).toBe(true);
+    expect(validateManagedStaticConfig(dns("rfc2136")).ok).toBe(true);
+    reject(dns(""), /needs a DNS provider/);
+    reject(dns("Cloud Flare"), /not a valid DNS provider code/);
+    reject(dns("cloud-flare"), /not a valid DNS provider code/);
+    reject(dns("$(evil)"), /not a valid DNS provider code/);
+  });
+
+  it("requires a TLS-capable entrypoint whenever a resolver exists", () => {
+    reject(
+      { ...valid, entrypoints: [{ name: "web", port: 80 }] },
+      /no entrypoint has TLS enabled/
+    );
+    // no resolvers → plain http is fine
+    expect(
+      validateManagedStaticConfig({ entrypoints: [{ name: "web", port: 80 }], certResolvers: [] })
+        .ok
+    ).toBe(true);
+  });
+
+  it("type-checks fields instead of coercing (undefined name is not 'undefined')", () => {
+    reject(
+      { ...valid, entrypoints: [{ port: 80 } as unknown as ManagedStaticConfig["entrypoints"][0]] },
+      /name must be a string/
+    );
+    reject(
+      { ...valid, entrypoints: [{ name: "web", port: "80" as unknown as number }] },
+      /port must be a number/
+    );
+    reject(
+      {
+        ...valid,
+        entrypoints: [{ name: "web", port: 443, tls: { enabled: "yes" as unknown as boolean } }],
+      },
+      /tls.enabled must be a boolean/
+    );
+    reject(
+      { ...valid, certResolvers: [{ name: "le", email: "a@b.c", challenge: 7 as unknown as "tlsChallenge" }] },
+      /challenge must be a string/
+    );
+    reject("nope" as unknown as ManagedStaticConfig, /must be an object/);
+    reject({ entrypoints: [], certResolvers: {} } as unknown as ManagedStaticConfig, /must be arrays/);
+  });
+
+  it("rejects unknown fields at every level rather than persisting them", () => {
+    reject({ ...valid, extra: 1 } as unknown as ManagedStaticConfig, /Config: unknown field "extra"/);
+    reject(
+      { ...valid, entrypoints: [{ name: "web", port: 80, foo: "bar" } as unknown as ManagedStaticConfig["entrypoints"][0]] },
+      /Entrypoint #1: unknown field "foo"/
+    );
+    reject(
+      {
+        ...valid,
+        entrypoints: [
+          { name: "websecure", port: 443, tls: { enabled: true, sneaky: true } as unknown as ManagedStaticConfig["entrypoints"][0]["tls"] },
+        ],
+      },
+      /tls: unknown field "sneaky"/
+    );
+    reject(
+      {
+        ...valid,
+        certResolvers: [
+          { name: "le", email: "a@b.c", challenge: "tlsChallenge", storage: "/etc/passwd" } as unknown as ManagedStaticConfig["certResolvers"][0],
+        ],
+      },
+      /Resolver #1: unknown field "storage"/
+    );
+  });
+
+  it("returns a canonical copy: empty strings/nulls normalised, stale fields dropped", () => {
+    const res = validateManagedStaticConfig({
+      entrypoints: [
+        { name: "web", port: 80, redirectToEntrypoint: null, tls: null },
+        { name: "websecure", port: 443, tls: { enabled: true, certResolver: "" } },
+      ],
+      certResolvers: [
+        // httpChallengeEntrypoint left over from a previous challenge choice
+        { name: "le", email: " a@b.c ", challenge: "tlsChallenge", httpChallengeEntrypoint: "web" },
+      ],
+    });
+    expect(res).toEqual({
+      ok: true,
+      value: {
+        entrypoints: [
+          { name: "web", port: 80 },
+          { name: "websecure", port: 443, tls: { enabled: true } },
+        ],
+        certResolvers: [{ name: "le", email: "a@b.c", challenge: "tlsChallenge" }],
+      },
+    });
+  });
 });
 
 describe("env helpers", () => {
@@ -255,11 +364,14 @@ describe("DNS credentials (write-only secrets)", () => {
     );
   });
 
-  it("hostOnly strips ports (incl. IPv6) and lowercases", () => {
+  it("hostOnly strips ports (incl. IPv6), trailing dots, and lowercases", () => {
     expect(hostOnly("Admin.Example.COM:443")).toBe("admin.example.com");
     expect(hostOnly("traefik-configurator:3000")).toBe("traefik-configurator");
     expect(hostOnly("[::1]:3000")).toBe("[::1]");
     expect(hostOnly(null)).toBe("");
+    // Traefik's Host() matcher ignores a trailing dot but forwards it verbatim
+    expect(hostOnly("admin.example.com.")).toBe("admin.example.com");
+    expect(hostOnly("admin.example.com.:443")).toBe("admin.example.com");
   });
 
   it("isPublicDomainRequest flags web requests, allows the internal wrapper", () => {
@@ -281,6 +393,43 @@ describe("DNS credentials (write-only secrets)", () => {
         domain
       )
     ).toBe(false);
+    // FQDN form reaches the admin router too — must still be flagged
+    expect(isPublicDomainRequest(h({ host: "admin.example.com." }), domain)).toBe(true);
+    expect(isPublicDomainRequest(h({ host: "ADMIN.example.com.:443" }), domain)).toBe(true);
+  });
+
+  it("wrapperToken reads MANAGED_WRAPPER_TOKEN, trimmed, null when blank", () => {
+    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "  tok  ");
+    expect(wrapperToken()).toBe("tok");
+    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "   ");
+    expect(wrapperToken()).toBeNull();
+  });
+
+  it("safeEqualStrings compares in constant time regardless of length", () => {
+    expect(safeEqualStrings("abc", "abc")).toBe(true);
+    expect(safeEqualStrings("abc", "abd")).toBe(false);
+    expect(safeEqualStrings("abc", "abcd")).toBe(false);
+    expect(safeEqualStrings("", "")).toBe(true);
+  });
+
+  it("isAuthorizedWrapperRequest requires the exact bearer token", () => {
+    const h = (init: Record<string, string>) => new Headers(init);
+    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "s3cret-token");
+    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-token" }))).toBe(true);
+    expect(isAuthorizedWrapperRequest(h({ authorization: "bearer s3cret-token" }))).toBe(true);
+    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-toke" }))).toBe(false);
+    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-token-x" }))).toBe(false);
+    expect(isAuthorizedWrapperRequest(h({ authorization: "Basic s3cret-token" }))).toBe(false);
+    expect(isAuthorizedWrapperRequest(h({ authorization: "s3cret-token" }))).toBe(false);
+    expect(isAuthorizedWrapperRequest(h({}))).toBe(false);
+    // the Host heuristic alone must never authorize
+    expect(isAuthorizedWrapperRequest(h({ host: "traefik-configurator:3000" }))).toBe(false);
+  });
+
+  it("isAuthorizedWrapperRequest fails closed when no token is configured", () => {
+    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "");
+    expect(isAuthorizedWrapperRequest(new Headers({ authorization: "Bearer " }))).toBe(false);
+    expect(isAuthorizedWrapperRequest(new Headers({ authorization: "Bearer x" }))).toBe(false);
   });
 
   it("applySecretEdits upserts, removes (remove before upsert), and validates", () => {
@@ -298,6 +447,15 @@ describe("DNS credentials (write-only secrets)", () => {
       { upsert: [{ name: "A", value: "2" }], remove: ["A"] }
     );
     expect(r).toEqual({ ok: true, value: { A: "2" } });
+  });
+
+  it("applySecretEdits ignores malformed batches instead of coercing them", () => {
+    const r = applySecretEdits(
+      { A: "1" },
+      { upsert: ["A" as unknown as { name: string; value: string }, { name: 5 as unknown as string, value: "x" }], remove: [7 as unknown as string] }
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join("\n")).toMatch(/must be an object|Invalid environment variable name/);
   });
 
   it("applySecretEdits rejects invalid names and empty values", () => {

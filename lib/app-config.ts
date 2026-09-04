@@ -5,7 +5,7 @@ import {
   DEFAULT_MANAGED_STATIC_CONFIG,
   type ManagedStaticConfig,
 } from "@/lib/managed-traefik-types";
-import { hashText } from "@/lib/managed-traefik";
+import { hashText, isManagedMode } from "@/lib/managed-traefik";
 
 export interface GlobalTraefikConfig {
   globalMiddlewares: string[];
@@ -43,6 +43,48 @@ export function normalizeGlobalConfig(
   return merged;
 }
 
+/**
+ * Managed-bundle bootstrap: the compose publishes no panel port, so with the
+ * default `localhost:3000` admin domain there is no admin router and no way
+ * in to set one. `ADMIN_PANEL_DOMAIN` seeds the value ONCE — only while the
+ * stored domain is still the default; a value set in the UI always wins.
+ * Pure — exported for tests. Returns the seeded domain or null (no-op).
+ */
+export function adminPanelDomainSeed(
+  current: GlobalTraefikConfig,
+  env: { ADMIN_PANEL_DOMAIN?: string; managed: boolean }
+): string | null {
+  if (!env.managed) return null;
+  const seed = env.ADMIN_PANEL_DOMAIN?.trim().toLowerCase().replace(/\/+$/, "");
+  if (!seed || seed === DEFAULT_CONFIG.adminPanelDomain) return null;
+  if (current.adminPanelDomain !== DEFAULT_CONFIG.adminPanelDomain) return null;
+  return seed;
+}
+
+let seedAttempted = false;
+
+/** Seed the admin domain from ADMIN_PANEL_DOMAIN at most once per process. */
+async function maybeSeedAdminPanelDomain(
+  current: GlobalTraefikConfig
+): Promise<GlobalTraefikConfig> {
+  if (seedAttempted) return current;
+  seedAttempted = true;
+  const seed = adminPanelDomainSeed(current, {
+    ADMIN_PANEL_DOMAIN: process.env.ADMIN_PANEL_DOMAIN,
+    managed: isManagedMode(),
+  });
+  if (!seed) return current;
+  const seeded = { ...current, adminPanelDomain: seed };
+  try {
+    await updateGlobalConfig(seeded);
+    console.log(`Seeded admin panel domain from ADMIN_PANEL_DOMAIN: ${seed}`);
+    return seeded;
+  } catch (error) {
+    console.error("Error seeding admin panel domain:", error);
+    return current;
+  }
+}
+
 export async function getGlobalConfig(): Promise<GlobalTraefikConfig> {
   try {
     const configs = await db
@@ -51,11 +93,11 @@ export async function getGlobalConfig(): Promise<GlobalTraefikConfig> {
       .where(eq(appConfig.key, "traefik_global_config"));
 
     if (configs.length === 0) {
-      return DEFAULT_CONFIG;
+      return maybeSeedAdminPanelDomain(DEFAULT_CONFIG);
     }
 
     const savedConfig = JSON.parse(configs[0].value) as Partial<GlobalTraefikConfig>;
-    return normalizeGlobalConfig(savedConfig);
+    return maybeSeedAdminPanelDomain(normalizeGlobalConfig(savedConfig));
   } catch (error) {
     console.error("Error fetching global config:", error);
     return DEFAULT_CONFIG;

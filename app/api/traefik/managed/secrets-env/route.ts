@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGlobalConfig, recordManagedSecretsFetch } from "@/lib/app-config";
 import {
   hashText,
+  isAuthorizedWrapperRequest,
   isManagedMode,
   isPublicDomainRequest,
   serializeSecretsEnv,
+  wrapperToken,
 } from "@/lib/managed-traefik";
 import { readManagedSecrets } from "@/lib/managed-secrets-store";
 
@@ -13,13 +15,15 @@ export const dynamic = "force-dynamic";
 /**
  * Serves DNS-provider credentials as a shell-sourceable env file — for the
  * in-network Traefik wrapper ONLY. This is the one place raw secret values
- * leave the database, so it is locked down two ways:
+ * leave the panel, so it is locked down three ways:
  *   1. managed mode only (404 otherwise);
- *   2. it REFUSES any request that arrived via the public admin domain.
- * The panel is only exposed to the web through Traefik's admin route, which
- * forces Host(adminPanelDomain); the in-network wrapper reaches the panel by
- * its internal service name. So a request whose Host is the public domain
- * came through the web and is refused — credentials are write-only there.
+ *   2. the caller must present `Authorization: Bearer <MANAGED_WRAPPER_TOKEN>`
+ *      (the shared secret compose hands to both the panel and the wrapper) —
+ *      401 otherwise, including when the token isn't configured at all;
+ *   3. defense in depth: any request that arrived via the public admin domain
+ *      is refused (403) even with a valid token. Traefik's admin router
+ *      forces Host(adminPanelDomain) — trailing-dot forms included, see
+ *      hostOnly — while the wrapper reaches the panel by its internal name.
  */
 export async function GET(request: NextRequest) {
   if (!isManagedMode()) {
@@ -27,6 +31,14 @@ export async function GET(request: NextRequest) {
       { error: "Managed mode is not enabled" },
       { status: 404 }
     );
+  }
+  if (!wrapperToken()) {
+    console.error(
+      "MANAGED_WRAPPER_TOKEN is not set — refusing to serve credentials to the wrapper"
+    );
+  }
+  if (!isAuthorizedWrapperRequest(request.headers)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { adminPanelDomain } = await getGlobalConfig();
   if (isPublicDomainRequest(request.headers, adminPanelDomain)) {

@@ -14,10 +14,10 @@ import {
   parseAdminPanelAuthUsers,
   stringifyStaticConfig,
 } from "@/lib/managed-traefik";
+import { probeManagedSecrets } from "@/lib/managed-secrets-store";
 import {
   validateManagedStaticConfig,
   type ManagedModeResponse,
-  type ManagedStaticConfig,
 } from "@/lib/managed-traefik-types";
 
 export const dynamic = "force-dynamic";
@@ -34,11 +34,20 @@ async function buildResponse(): Promise<ManagedModeResponse> {
       status: null,
     };
   }
-  const [globalConfig, config, state, secretMeta] = await Promise.all([
+  const [globalConfig, config, state, secretMeta, secretsProbe] = await Promise.all([
     getGlobalConfig(),
     getManagedStaticConfig(),
     getManagedStaticState(),
     getManagedSecretMeta(),
+    // Cheap: decrypts the small credential file so the UI can offer a reset
+    // after a MANAGED_SECRETS_KEY rotation. Values never leave the server.
+    probeManagedSecrets().catch((error: unknown) => {
+      console.error(
+        "Error probing managed credential file:",
+        error instanceof Error ? error.message : "unknown error"
+      );
+      return { undecryptable: false };
+    }),
   ]);
   const currentHash = hashStaticConfig(
     stringifyStaticConfig(
@@ -58,6 +67,7 @@ async function buildResponse(): Promise<ManagedModeResponse> {
     adminAuthConfigured,
     config,
     secretNames: secretMeta.names,
+    secretsUndecryptable: secretsProbe.undecryptable,
     status: {
       currentHash,
       lastFetchedHash: state.lastFetchedHash,
@@ -87,7 +97,9 @@ export async function PUT(request: NextRequest) {
     );
   }
   try {
-    const body = (await request.json()) as ManagedStaticConfig;
+    const body: unknown = await request.json();
+    // `result.value` is the canonical copy (known fields only) — persist it,
+    // never the raw body.
     const result = validateManagedStaticConfig(body);
     if (!result.ok) {
       return NextResponse.json({ errors: result.errors }, { status: 400 });
