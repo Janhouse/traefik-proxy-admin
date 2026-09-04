@@ -12,7 +12,7 @@ import type { Service } from "@/components/service-table";
 import type { ServiceFormData } from "@/hooks/use-service-form";
 
 export default function EditServicePage() {
-  const { saveService, defaultDuration, fetchServiceById } = useServices();
+  const { saveService, fetchServiceById } = useServices();
   const router = useRouter();
   const params = useParams();
   const [saving, setSaving] = useState(false);
@@ -85,7 +85,6 @@ export default function EditServicePage() {
       <PageMain>
         <ServiceForm
           service={service}
-          defaultDuration={defaultDuration}
           onSubmit={handleSubmit}
           onCancel={() => router.push("/services")}
           submitting={saving}

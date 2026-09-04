@@ -1,5 +1,6 @@
 "use client";
 
+import NextLink from "next/link";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -25,12 +26,12 @@ export function ConfigForm({ config, onConfigChange }: ConfigFormProps) {
           <>
             Where this panel lives and what new services start with. Domains
             and certificates are managed per-domain on the{" "}
-            <a
+            <NextLink
               href="/domains"
               className="text-[var(--info)] underline hover:text-foreground transition-colors"
             >
               Domains page
-            </a>
+            </NextLink>
             .
           </>
         }

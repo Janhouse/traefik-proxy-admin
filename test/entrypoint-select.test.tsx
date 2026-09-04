@@ -8,12 +8,15 @@ import type { EntrypointsResponse } from "@/lib/traefik-client-types";
 
 const mockState = vi.hoisted(() => ({
   entrypoints: null as unknown,
+  loading: false,
+  error: null as string | null,
 }));
 
 vi.mock("@/hooks/use-traefik", () => ({
   useTraefikEntrypoints: () => ({
     entrypoints: mockState.entrypoints,
-    loading: false,
+    loading: mockState.loading,
+    error: mockState.error,
     refresh: vi.fn(),
   }),
 }));
@@ -35,6 +38,8 @@ const fixture: EntrypointsResponse = {
 
 beforeEach(() => {
   mockState.entrypoints = fixture;
+  mockState.loading = false;
+  mockState.error = null;
 });
 afterEach(() => cleanup());
 
@@ -84,6 +89,32 @@ describe("EntrypointSelect", () => {
     expect(
       screen.getByText(/No entrypoints discovered — set TRAEFIK_API_URL\./)
     ).toBeDefined();
+  });
+
+  it("says it is discovering while loading — never 'set TRAEFIK_API_URL'", () => {
+    mockState.entrypoints = null;
+    mockState.loading = true;
+    render(<EntrypointSelect value={[]} onChange={vi.fn()} />);
+    expect(screen.getByText(/Discovering entrypoints/)).toBeDefined();
+    expect(screen.queryByText(/TRAEFIK_API_URL/)).toBeNull();
+  });
+
+  it("reports the Traefik API as unreachable when configured but down, keeping saved picks", () => {
+    mockState.entrypoints = { configured: true, reachable: false, entrypoints: [] };
+    render(<EntrypointSelect value={["websecure"]} onChange={vi.fn()} />);
+    expect(screen.getByText(/Traefik API unreachable/)).toBeDefined();
+    expect(screen.queryByText(/set TRAEFIK_API_URL/)).toBeNull();
+    // the saved selection is still rendered (and toggleable)
+    expect(screen.getByRole("button", { name: /websecure/ })).toBeDefined();
+  });
+
+  it("surfaces an admin-API failure instead of blaming the configuration", () => {
+    mockState.entrypoints = null;
+    mockState.error = "Admin API responded 500";
+    render(<EntrypointSelect value={[]} onChange={vi.fn()} />);
+    expect(screen.getByText(/Couldn't load entrypoints/)).toBeDefined();
+    expect(screen.getByText(/Admin API responded 500/)).toBeDefined();
+    expect(screen.queryByText(/set TRAEFIK_API_URL/)).toBeNull();
   });
 
   it("disables the toggles when disabled", () => {

@@ -6,7 +6,6 @@ import { useState } from "react";
 import { Settings, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppFooter } from "@/components/app-footer";
-import { Toaster } from "@/components/toaster";
 import { useManagedMode } from "@/lib/hooks/use-managed-mode";
 
 interface AppLayoutProps {
@@ -150,7 +149,6 @@ export function AppLayout({ children }: AppLayoutProps) {
         {children}
         <AppFooter />
       </div>
-      <Toaster />
     </div>
   );
 }

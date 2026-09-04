@@ -12,6 +12,7 @@ import { MiddlewareSelect } from "@/components/traefik/middleware-select";
 import { RouteRuleEditor } from "@/components/traefik/route-rule-editor";
 import { Save } from "lucide-react";
 import { useServiceForm, type ServiceFormData } from "@/hooks/use-service-form";
+import { defaultDomainIdOf } from "@/hooks/host-tree";
 import { useDomains } from "@/lib/hooks/use-domains";
 import { parseMiddlewareNames, serviceEntrypoints } from "@/lib/service-display";
 import { parseMatchRules, type HostnameMode } from "@/lib/route-rule";
@@ -19,7 +20,8 @@ import type { Service } from "./service-table";
 
 interface ServiceFormProps {
   service: Service | null;
-  defaultDuration?: number;
+  /** Auto-disable default for new services (null = never). */
+  defaultDuration?: number | null;
   onSubmit: (data: ServiceFormData) => Promise<void>;
   onCancel: () => void;
   submitting?: boolean;
@@ -46,11 +48,12 @@ export function ServiceForm({
   onCancel,
   submitting = false,
 }: ServiceFormProps) {
+  const { domains, fetchDomains } = useDomains();
   const { formData, updateFormData, hasUnsavedChanges } = useServiceForm({
     service,
     defaultDuration,
+    defaultDomainId: defaultDomainIdOf(domains),
   });
-  const { domains, fetchDomains } = useDomains();
   const [hostHeader, setHostHeader] = useState(() =>
     extractHostHeader(service?.requestHeaders)
   );

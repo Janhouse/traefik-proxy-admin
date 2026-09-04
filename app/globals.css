@@ -568,6 +568,10 @@
   .conflict code { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-3); color: var(--fg-2); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-soft); }
   .conflict .c-meta { color: var(--meta); font-size: 11.5px; margin-top: 8px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
   .conflict .c-actions { display: flex; gap: 8px; margin-top: 11px; }
+  /* non-blocking overlap with a foreign router: warn tone, same as managed */
+  .conflict.warn { background: var(--warn-soft); border-color: color-mix(in oklab, var(--warn) 38%, transparent); }
+  .conflict.warn .c-ic { color: var(--warn); background: color-mix(in oklab, var(--warn) 18%, transparent); }
+  .conflict.warn .c-title { color: var(--warn); }
 
   .matchers { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
   .matcher-row { display: flex; align-items: center; gap: 9px; }
@@ -618,6 +622,18 @@
   .rp-copy:disabled { opacity: .45; cursor: default; }
   .rp-url { padding: 8px 15px; border-top: 1px solid var(--border-soft); font-size: 12px; color: var(--meta); background: color-mix(in oklab, var(--surface-2) 50%, transparent); }
   :root:not(.dark) .rp-code { color: #2a3647; }
+  /* --surface-3 is the always-dark code canvas; the inset chips/toggles that
+   * borrow it need a light surface in light mode or their text vanishes. */
+  :root:not(.dark) .conflict code { background: var(--surface-2); }
+  :root:not(.dark) .host-toggle,
+  :root:not(.dark) .ep-ic,
+  :root:not(.dark) .sec-typeseg button .si { background: var(--bg-2); }
+  :root:not(.dark) .matcher-group .matcher-group { background: color-mix(in oklab, var(--bg-2) 60%, transparent); }
+
+  /* popover menu items are real <button>s (keyboard reachable): reset the
+   * UA button chrome and mirror the hover look for keyboard focus */
+  button.tag-opt, button.host-opt { width: 100%; border: none; background: transparent; color: inherit; font: inherit; text-align: left; }
+  button.tag-opt:focus-visible, button.host-opt:focus-visible { outline: none; background: color-mix(in oklab, var(--foreground) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--brand) 45%, transparent); }
 
   /* ── Security screens (summary bar + section header) ────────────────────── */
   .sec-bar { display: flex; gap: 14px; flex-wrap: wrap; padding: 16px 18px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); }

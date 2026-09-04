@@ -34,8 +34,22 @@ export function EntrypointSelect({
   disabled,
   helpText,
 }: EntrypointSelectProps) {
-  const { entrypoints } = useTraefikEntrypoints();
+  const { entrypoints, loading, error } = useTraefikEntrypoints();
   const epList = useMemo(() => entrypoints?.entrypoints || [], [entrypoints]);
+  // Mirror MiddlewareSelect: only claim "set TRAEFIK_API_URL" when the API
+  // really is unconfigured — not while loading, not when merely unreachable.
+  const configured = !!entrypoints?.configured;
+  const reachable = !!entrypoints?.reachable;
+  const available = configured && reachable;
+  const status: React.ReactNode = loading
+    ? null
+    : error && !entrypoints
+      ? `Couldn't load entrypoints — ${error}. Enter names from your Traefik static config.`
+      : !configured
+        ? "No entrypoints discovered — set TRAEFIK_API_URL."
+        : !reachable
+          ? "Traefik API unreachable — entrypoints can't be discovered right now; saved selections are kept."
+          : null;
 
   const showTraefikEp = value.includes(TRAEFIK_API_ENTRYPOINT);
   const epNames = useMemo(() => {
@@ -54,9 +68,14 @@ export function EntrypointSelect({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="ep-grid">
-        {epNames.length === 0 && (
+        {epNames.length === 0 && loading && (
           <span className="text-[12px] text-[var(--meta)]">
-            No entrypoints discovered — set TRAEFIK_API_URL.
+            Discovering entrypoints…
+          </span>
+        )}
+        {epNames.length === 0 && !loading && available && (
+          <span className="text-[12px] text-[var(--meta)]">
+            Traefik reports no entrypoints.
           </span>
         )}
         {epNames.map((name) => {
@@ -93,6 +112,11 @@ export function EntrypointSelect({
           );
         })}
       </div>
+      {status && (
+        <span className="text-[12px] text-[var(--warn)]" role="status">
+          {status}
+        </span>
+      )}
       {helpText && (
         <span className="text-[12px] text-[var(--meta)]">{helpText}</span>
       )}

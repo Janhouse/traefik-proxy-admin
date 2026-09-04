@@ -7,7 +7,6 @@ import type { ServiceFormData } from "./use-service-form";
 export function useServices() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
-  const [defaultDuration, setDefaultDuration] = useState<number | undefined>(12);
 
   const fetchServices = useCallback(async () => {
     try {
@@ -22,20 +21,6 @@ export function useServices() {
       console.error("Error fetching services:", error);
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  const fetchConfig = useCallback(async () => {
-    try {
-      const response = await fetch("/api/config");
-      if (response.ok) {
-        const config = await response.json();
-        if (config.defaultEnableDurationMinutes !== undefined) {
-          setDefaultDuration(config.defaultEnableDurationMinutes);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch config:", error);
     }
   }, []);
 
@@ -126,10 +111,8 @@ export function useServices() {
   return {
     services,
     loading,
-    defaultDuration,
     fetchServices,
     fetchServiceById,
-    fetchConfig,
     saveService,
     deleteService,
     toggleService,

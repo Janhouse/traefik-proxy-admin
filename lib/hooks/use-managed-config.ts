@@ -76,13 +76,15 @@ export function useManagedConfig(pollMs = 10_000) {
     }
   }, [applyResponse]);
 
+  // Poll for the applied/pending status — but not once we know the panel is
+  // not managing Traefik at all (nothing would ever change).
   useEffect(() => {
-    refresh();
-    if (pollMs > 0) {
+    if (managed === null) refresh();
+    if (pollMs > 0 && managed !== false) {
       const id = setInterval(refresh, pollMs);
       return () => clearInterval(id);
     }
-  }, [refresh, pollMs]);
+  }, [refresh, pollMs, managed]);
 
   const putJson = (url: string, body: unknown) =>
     fetch(url, {

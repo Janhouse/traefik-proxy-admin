@@ -18,6 +18,7 @@ import type {
 } from "@/lib/route-rule";
 import type {
   EntrypointsResponse,
+  RouteConflictRouter,
   RouteConflictsResponse,
 } from "@/lib/traefik-client-types";
 
@@ -51,10 +52,8 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-import {
-  RouteRuleEditor,
-  legacyHostTree,
-} from "@/components/traefik/route-rule-editor";
+import { RouteRuleEditor } from "@/components/traefik/route-rule-editor";
+import { legacyHostTree } from "@/hooks/host-tree";
 
 const entrypointsFixture = {
   configured: true,
@@ -70,6 +69,19 @@ const noConflicts: RouteConflictsResponse = {
   reachable: true,
   routers: [],
 };
+
+/** `hostOnly` (rule is nothing but Host() matchers) is optional here so the
+ * fixtures compile whether or not the API type already carries it. */
+type ConflictRouterFixture = Omit<RouteConflictRouter, "hostOnly"> & {
+  hostOnly?: boolean;
+};
+const conflictsOf = (
+  routers: ConflictRouterFixture[]
+): RouteConflictsResponse => ({
+  configured: true,
+  reachable: true,
+  routers: routers as RouteConflictRouter[],
+});
 
 const domains = [
   { id: "d1", name: "Example", domain: "example.com", isDefault: true },
@@ -500,20 +512,17 @@ describe("RouteRuleEditor entrypoints", () => {
 
 describe("RouteRuleEditor conflicts", () => {
   it("does NOT show a conflict banner for internal cert-trigger routers", () => {
-    mockState.conflicts = {
-      configured: true,
-      reachable: true,
-      routers: [
-        {
-          routerName: "wildcard-cert-router-example-com@http",
-          hosts: ["app.example.com"],
-          entryPoints: ["websecure"],
-          provider: "http",
-          managedServiceId: null,
-          internal: true,
-        },
-      ],
-    } satisfies RouteConflictsResponse;
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "wildcard-cert-router-example-com@http",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "http",
+        managedServiceId: null,
+        internal: true,
+      },
+    ]);
 
     renderEditor([]);
     expect(
@@ -521,20 +530,78 @@ describe("RouteRuleEditor conflicts", () => {
     ).toBeNull();
   });
 
-  it("still shows the banner for genuine external conflicts and blocks saving", () => {
-    mockState.conflicts = {
-      configured: true,
-      reachable: true,
-      routers: [
-        {
-          routerName: "grafana@file",
-          hosts: ["app.example.com"],
-          entryPoints: ["websecure"],
-          provider: "file",
-          managedServiceId: null,
-        },
-      ],
-    } satisfies RouteConflictsResponse;
+  it("a foreign HOST-ONLY router is a hard conflict: banner + saving blocked", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "grafana@file",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    const { onBlockedChange } = renderEditor([]);
+    expect(
+      screen.getByText(/conflicts with a router outside this tool/i)
+    ).toBeDefined();
+    expect(screen.getByText(/saving is blocked/i)).toBeDefined();
+    expect(onBlockedChange.mock.calls.at(-1)?.[0]).toBe(true);
+  });
+
+  it("a foreign router with EXTRA matchers only warns and does not block saving", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "grafana-api@file",
+        hosts: ["app.example.com"],
+        hostOnly: false, // e.g. Host(`app.example.com`) && PathPrefix(`/api`)
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    const { onBlockedChange } = renderEditor([]);
+    expect(
+      screen.getByText(/overlaps with a router outside this tool/i)
+    ).toBeDefined();
+    expect(screen.getByText(/saving is allowed/i)).toBeDefined();
+    expect(
+      screen.queryByText(/conflicts with a router outside this tool/i)
+    ).toBeNull();
+    expect(onBlockedChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("a foreign router WITHOUT the hostOnly flag is treated as an overlap (non-blocking)", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "legacy@file",
+        hosts: ["app.example.com"],
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    const { onBlockedChange } = renderEditor([]);
+    expect(
+      screen.getByText(/overlaps with a router outside this tool/i)
+    ).toBeDefined();
+    expect(onBlockedChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("matches hostnames case-insensitively", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "grafana@file",
+        hosts: ["APP.Example.COM"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
 
     const { onBlockedChange } = renderEditor([]);
     expect(
@@ -543,57 +610,141 @@ describe("RouteRuleEditor conflicts", () => {
     expect(onBlockedChange.mock.calls.at(-1)?.[0]).toBe(true);
   });
 
+  it("checks EVERY Host rule in the tree, not just the primary one", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "alt@file",
+        hosts: ["alt.other.org"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    // primary host is app.example.com; the conflicting host sits in a group
+    const { onBlockedChange } = renderEditor([
+      g("OR", { type: "Host", conn: "AND", domainId: "d2", sub: "alt" }),
+    ]);
+    expect(
+      screen.getByText(/conflicts with a router outside this tool/i)
+    ).toBeDefined();
+    // the banner names the host that actually collides
+    expect(screen.getByText("Host(`alt.other.org`)")).toBeDefined();
+    expect(onBlockedChange.mock.calls.at(-1)?.[0]).toBe(true);
+  });
+
+  it("ignores routers on non-overlapping entrypoints", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "grafana@file",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["web"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    const { onBlockedChange } = renderEditor([]); // service is on websecure
+    expect(screen.queryByText(/router outside this tool/i)).toBeNull();
+    expect(onBlockedChange).not.toHaveBeenCalledWith(true);
+  });
+
   it("skips the service's OWN routers — editing a multi-entrypoint service is not a conflict", () => {
     // The original bug: the service's own (split, per-entrypoint) runtime
     // routers were flagged as "already existing" while editing that service.
-    mockState.conflicts = {
-      configured: true,
-      reachable: true,
-      routers: [
-        {
-          routerName: "router-app-example-com-websecure@http",
-          hosts: ["app.example.com"],
-          entryPoints: ["websecure"],
-          provider: "http",
-          managedServiceId: "svc-1", // === the editor's serviceId
-        },
-        {
-          routerName: "router-app-example-com-web@http",
-          hosts: ["app.example.com"],
-          entryPoints: ["web"],
-          provider: "http",
-          managedServiceId: "svc-1",
-        },
-      ],
-    } satisfies RouteConflictsResponse;
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "router-app-example-com-websecure@http",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "http",
+        managedServiceId: "svc-1", // === the editor's serviceId
+      },
+      {
+        routerName: "router-app-example-com-web@http",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["web"],
+        provider: "http",
+        managedServiceId: "svc-1",
+      },
+    ]);
 
     const { onBlockedChange } = renderEditor([], {
       entrypoints: ["web", "websecure"],
     });
     expect(
-      screen.queryByText(/already managed here|conflicts with a router/i)
+      screen.queryByText(/already managed here|router outside this tool/i)
     ).toBeNull();
     expect(onBlockedChange).not.toHaveBeenCalledWith(true);
   });
 
   it("shows a NON-blocking banner when the rule belongs to a different managed service", () => {
-    mockState.conflicts = {
-      configured: true,
-      reachable: true,
-      routers: [
-        {
-          routerName: "router-app-example-com@http",
-          hosts: ["app.example.com"],
-          entryPoints: ["websecure"],
-          provider: "http",
-          managedServiceId: "other-svc",
-        },
-      ],
-    } satisfies RouteConflictsResponse;
+    mockState.conflicts = conflictsOf([
+      {
+        routerName: "router-app-example-com@http",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "http",
+        managedServiceId: "other-svc",
+      },
+    ]);
 
     const { onBlockedChange } = renderEditor([]);
     expect(screen.getByText(/already managed here/i)).toBeDefined();
     expect(onBlockedChange).not.toHaveBeenCalledWith(true);
+  });
+});
+
+describe("RouteRuleEditor keyboard menus", () => {
+  it("the Add rule menu is a keyboard menu: arrows move focus, Enter adds, Escape closes", async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderEditor([]);
+
+    const trigger = screen.getAllByRole("button", { name: /add rule/i })[0];
+    trigger.focus();
+    await user.keyboard("{ArrowDown}"); // opens the menu
+    const menu = screen.getAllByRole("menu")[0];
+    const items = within(menu).getAllByRole("menuitem");
+    expect(document.activeElement).toBe(items[0]);
+
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[1]); // Path prefix
+    await user.keyboard("{Enter}");
+
+    const emitted = lastEmitted(onChange);
+    expect(emitted.matchRules.at(-1)).toMatchObject({ type: "PathPrefix" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    await user.click(trigger);
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("the domain picker is a keyboard menu with the current domain focused", async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderEditor([]);
+
+    await user.click(screen.getByRole("button", { name: /example\.com/ }));
+    const menu = screen.getByRole("menu", { name: /managed domain/i });
+    const domainsItems = within(menu).getAllByRole("menuitemradio");
+    expect(domainsItems).toHaveLength(2);
+    expect(within(menu).getAllByRole("menuitem")).toHaveLength(1); // "Custom hostname…"
+    expect(domainsItems[0].getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(domainsItems[0]); // current (d1) is focused
+
+    await user.keyboard("{ArrowDown}{Enter}"); // pick other.org
+    expect(lastEmitted(onChange).matchRules[0]).toMatchObject({
+      type: "Host",
+      domainId: "d2",
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
 

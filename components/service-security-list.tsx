@@ -21,6 +21,10 @@ interface ServiceSecurityListProps {
 type Item = {
   _key: string;
   _save: SaveState;
+  /** Persisted rule this item replaces after a type switch. The old rule
+   * stays live server-side until the new one has been created successfully,
+   * so a service is never left without its protection mid-edit. */
+  _replaces?: string;
   id?: string;
   type: SecurityType;
   isEnabled: boolean;
@@ -69,62 +73,6 @@ export function ServiceSecurityList({
     );
   }, []);
 
-  const persist = useCallback(
-    async (key: string) => {
-      const it = itemsRef.current.find((x) => x._key === key);
-      if (!it) return;
-      if (!isValid(it)) {
-        setSave(key, "draft");
-        return;
-      }
-      setSave(key, "saving");
-      try {
-        if (it.id) {
-          const res = await fetch(`/api/services/security-configs/${it.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              isEnabled: it.isEnabled,
-              priority: it.priority,
-              config: it.config,
-            }),
-          });
-          if (!res.ok) throw new Error(`${res.status}`);
-        } else {
-          const res = await fetch(`/api/services/${serviceId}/security-configs`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serviceId,
-              securityType: it.type,
-              isEnabled: it.isEnabled,
-              priority: it.priority,
-              config: it.config,
-            }),
-          });
-          if (!res.ok) throw new Error(`${res.status}`);
-          const created = await res.json();
-          updateItem(key, { id: created.id });
-        }
-        setSave(key, "saved");
-        setError(null);
-      } catch {
-        setSave(key, "draft");
-        setError("Failed to save a configuration — check the values and retry.");
-      }
-    },
-    [serviceId, setSave, updateItem]
-  );
-
-  const scheduleSave = useCallback(
-    (key: string, delay: number) => {
-      setSave(key, "saving");
-      if (timers.current[key]) clearTimeout(timers.current[key]);
-      timers.current[key] = setTimeout(() => void persist(key), delay);
-    },
-    [persist, setSave]
-  );
-
   const fetchConfigs = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -154,6 +102,86 @@ export function ServiceSecurityList({
       setLoading(false);
     }
   }, [serviceId]);
+
+  const persist = useCallback(
+    async (key: string) => {
+      const it = itemsRef.current.find((x) => x._key === key);
+      if (!it) return;
+      if (!isValid(it)) {
+        setSave(key, "draft");
+        return;
+      }
+      setSave(key, "saving");
+      try {
+        if (it.id) {
+          const res = await fetch(`/api/services/security-configs/${it.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              isEnabled: it.isEnabled,
+              priority: it.priority,
+              config: it.config,
+            }),
+          });
+          if (!res.ok) throw new Error(`${res.status}`);
+        } else {
+          // Create FIRST (same priority, so ordering is unchanged), and only
+          // then remove the rule this one replaces — a failed create must
+          // leave the old rule in place.
+          const res = await fetch(`/api/services/${serviceId}/security-configs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serviceId,
+              securityType: it.type,
+              isEnabled: it.isEnabled,
+              priority: it.priority,
+              config: it.config,
+            }),
+          });
+          if (!res.ok) throw new Error(`${res.status}`);
+          const created = await res.json();
+          updateItem(key, { id: created.id, _replaces: undefined });
+          if (it._replaces) {
+            let removed = false;
+            try {
+              const del = await fetch(
+                `/api/services/security-configs/${it._replaces}`,
+                { method: "DELETE" }
+              );
+              removed = del.ok;
+            } catch {
+              removed = false;
+            }
+            if (!removed) {
+              // Both rules now exist server-side: say so and resync the list
+              // so the leftover shows up and can be deleted by hand.
+              setError(
+                "The new rule was saved but the rule it replaces could not be removed — delete it below."
+              );
+              void fetchConfigs();
+              return;
+            }
+          }
+        }
+        setSave(key, "saved");
+        setError(null);
+      } catch {
+        setSave(key, "draft");
+        setError("Failed to save a configuration — check the values and retry.");
+      }
+    },
+    [serviceId, setSave, updateItem, fetchConfigs]
+  );
+
+  const scheduleSave = useCallback(
+    (key: string, delay: number) => {
+      setSave(key, "saving");
+      if (timers.current[key]) clearTimeout(timers.current[key]);
+      timers.current[key] = setTimeout(() => void persist(key), delay);
+    },
+    [persist, setSave]
+  );
 
   useEffect(() => {
     fetchConfigs();
@@ -191,17 +219,18 @@ export function ServiceSecurityList({
 
   const changeType = useCallback(
     (key: string, type: SecurityType) => {
-      // Traefik's securityType is immutable, so switching type recreates the
-      // rule: drop the previously persisted config and re-create with the new
-      // type (same priority) once it is valid.
+      // securityType is immutable server-side, so switching type re-creates
+      // the rule with the same priority. The previously persisted rule is
+      // remembered in `_replaces` and only deleted AFTER the replacement has
+      // been created (see persist) — until then it stays active.
       const it = itemsRef.current.find((x) => x._key === key);
-      const oldId = it?.id;
-      updateItem(key, { type, config: defaultConfig(type), id: undefined });
-      if (oldId) {
-        fetch(`/api/services/security-configs/${oldId}`, {
-          method: "DELETE",
-        }).catch(() => {});
-      }
+      if (!it) return;
+      updateItem(key, {
+        type,
+        config: defaultConfig(type),
+        id: undefined,
+        _replaces: it.id ?? it._replaces,
+      });
       scheduleSave(key, type === "basic_auth" ? 0 : 400);
     },
     [scheduleSave, updateItem]
@@ -228,9 +257,11 @@ export function ServiceSecurityList({
       if (timers.current[key]) clearTimeout(timers.current[key]);
       const it = itemsRef.current.find((x) => x._key === key);
       setItems((prev) => prev.filter((x) => x._key !== key));
-      if (it?.id) {
+      // a draft replacement still owns the persisted rule it was replacing
+      const persistedId = it?.id ?? it?._replaces;
+      if (persistedId) {
         try {
-          await fetch(`/api/services/security-configs/${it.id}`, {
+          await fetch(`/api/services/security-configs/${persistedId}`, {
             method: "DELETE",
           });
         } catch {
@@ -314,6 +345,7 @@ export function ServiceSecurityList({
                 config={it as unknown as EditableConfig}
                 open={openKeys.has(it._key)}
                 saveState={it._save}
+                replacing={!!it._replaces}
                 canSwitchType
                 disabledTypes={usedSingletons}
                 basicAuthConfigs={basicAuthConfigs}

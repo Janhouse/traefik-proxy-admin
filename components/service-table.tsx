@@ -10,7 +10,6 @@ import {
   Edit,
   Trash2,
   Shield,
-  ExternalLink,
   Clock,
   Copy,
   Link as LinkIcon,
@@ -423,8 +422,9 @@ export function ServiceTable({
                           }}
                           className="text-[var(--meta)] hover:text-foreground"
                           aria-label="Copy URL"
+                          title="Copy URL"
                         >
-                          <ExternalLink className="h-3.5 w-3.5" />
+                          <Copy className="h-3.5 w-3.5" />
                         </button>
                       </span>
                     ) : (

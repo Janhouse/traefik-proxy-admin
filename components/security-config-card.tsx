@@ -136,6 +136,9 @@ interface SecurityConfigCardProps {
   config: EditableConfig;
   open: boolean;
   saveState: SaveState;
+  /** A type switch is pending: the previously saved rule stays active until
+   * this one is complete and saved, then gets replaced. */
+  replacing?: boolean;
   /** type is selectable only before the rule is first persisted */
   canSwitchType: boolean;
   /** singleton types already used by other rules (disabled in the picker) */
@@ -152,6 +155,7 @@ export function SecurityConfigCard({
   config: c,
   open,
   saveState,
+  replacing = false,
   canSwitchType,
   disabledTypes,
   basicAuthConfigs,
@@ -397,7 +401,11 @@ export function SecurityConfigCard({
                   Saving…
                 </span>
               ) : saveState === "draft" ? (
-                <span className="saved">Unsaved — complete the fields above</span>
+                <span className="saved">
+                  {replacing
+                    ? "Unsaved — the previous rule stays active and will be replaced on save"
+                    : "Unsaved — complete the fields above"}
+                </span>
               ) : (
                 <span className="saved ok">
                   <Check />

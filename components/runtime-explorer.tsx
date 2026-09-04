@@ -23,12 +23,13 @@ type TabKey =
   | "certs";
 
 export function RuntimeExplorer() {
-  const { runtime, loading } = useTraefikRuntime(10000);
+  const { runtime, loading, error } = useTraefikRuntime(10000);
   const [tab, setTab] = useState<TabKey>("http-routers");
   const [query, setQuery] = useState("");
   const {
     certificates: certs,
     loading: certsLoading,
+    error: certsError,
     refresh: refreshCerts,
   } = useTraefikCertificates(tab === "certs");
 
@@ -40,7 +41,25 @@ export function RuntimeExplorer() {
     );
   }
 
-  if (!runtime?.configured) {
+  // The panel's OWN API failed (5xx / network) — distinct from Traefik being
+  // unconfigured or unreachable. Polling keeps retrying every 10s.
+  if (!runtime) {
+    return (
+      <div className="callout danger" role="alert">
+        <AlertTriangle className="ico" />
+        <div>
+          <h4 className="text-[13.5px] font-semibold">
+            Couldn&rsquo;t load the Traefik runtime
+          </h4>
+          <p className="text-[13px] text-[var(--fg-2)]">
+            {error || "The admin API did not respond."} Retrying automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!runtime.configured) {
     return (
       <div className="callout info">
         <AlertTriangle className="ico" />
@@ -346,7 +365,13 @@ export function RuntimeExplorer() {
       )}
 
       {tab === "certs" && (
-        <CertsPanel data={certs} loading={certsLoading} query={query} />
+        <CertsPanel
+          data={certs}
+          loading={certsLoading}
+          error={certsError}
+          query={query}
+          onRetry={() => refreshCerts()}
+        />
       )}
 
       <p className="mt-4 text-[12px] text-[var(--meta)]">
@@ -365,11 +390,15 @@ export function RuntimeExplorer() {
 function CertsPanel({
   data,
   loading,
+  error,
   query,
+  onRetry,
 }: {
   data: CertificatesResponse | null;
   loading: boolean;
+  error: string | null;
   query: string;
+  onRetry: () => void;
 }) {
   if (loading && !data) {
     return (
@@ -378,7 +407,29 @@ function CertsPanel({
       </div>
     );
   }
-  if (!data) return null;
+  if (!data) {
+    // the panel's own /api/traefik/certificates failed (or was never reached)
+    return (
+      <div className="callout danger" role="alert">
+        <AlertTriangle className="ico" />
+        <div>
+          <h4 className="text-[13.5px] font-semibold">
+            Couldn&rsquo;t load certificates
+          </h4>
+          <p className="text-[13px] text-[var(--fg-2)]">
+            {error || "The admin API did not respond."}
+          </p>
+          <button
+            type="button"
+            className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--brand)] hover:underline"
+            onClick={onRetry}
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!data.supported) {
     return (
       <div className="callout info">

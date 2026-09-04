@@ -5,12 +5,15 @@ import { AppLayout } from "@/components/app-layout";
 import { PageBand, PageMain } from "@/components/page-band";
 import { ServiceForm } from "@/components/service-form";
 import { useServices } from "@/hooks/use-services";
+import { useConfig } from "@/lib/hooks/use-config";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/toaster";
 import type { ServiceFormData } from "@/hooks/use-service-form";
 
 export default function AddServicePage() {
-  const { saveService, defaultDuration } = useServices();
+  const { saveService } = useServices();
+  // The auto-disable default comes from the global config (null = never).
+  const { config, isLoading: configLoading } = useConfig();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
 
@@ -40,7 +43,9 @@ export default function AddServicePage() {
       <PageMain>
         <ServiceForm
           service={null}
-          defaultDuration={defaultDuration}
+          defaultDuration={
+            configLoading ? undefined : config.defaultEnableDurationMinutes
+          }
           onSubmit={handleSubmit}
           onCancel={() => router.push("/services")}
           submitting={saving}

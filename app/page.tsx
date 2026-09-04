@@ -28,7 +28,7 @@ import { primaryHostname, targetAddress } from "@/lib/service-display";
 export default function DashboardPage() {
   const { services, loading, fetchServices } = useServices();
   const { health } = useBackendHealth(15000);
-  const { runtime } = useTraefikRuntime();
+  const { runtime, error: runtimeError } = useTraefikRuntime(30000);
   const router = useRouter();
 
   useEffect(() => {
@@ -157,7 +157,7 @@ export default function DashboardPage() {
               title="Traefik runtime"
               icon={<Network className="h-[18px] w-[18px]" />}
             >
-              <TraefikRuntimeSummary runtime={runtime} />
+              <TraefikRuntimeSummary runtime={runtime} error={runtimeError} />
             </Panel>
 
             <div className="grid grid-cols-2 gap-3">
@@ -265,9 +265,27 @@ function Launch({
 
 function TraefikRuntimeSummary({
   runtime,
+  error,
 }: {
   runtime: ReturnType<typeof useTraefikRuntime>["runtime"];
+  error: string | null;
 }) {
+  if (!runtime && error) {
+    // the panel's own API failed — not a Traefik configuration problem
+    return (
+      <div className="callout danger my-1" role="alert">
+        <AlertTriangle className="ico" />
+        <div>
+          <h4 className="text-[13.5px] font-semibold">
+            Couldn&rsquo;t load the Traefik runtime
+          </h4>
+          <p className="text-[13px] text-[var(--fg-2)]">
+            {error}. Retrying automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (!runtime) {
     return <p className="py-2 text-sm text-muted-foreground">Loading…</p>;
   }

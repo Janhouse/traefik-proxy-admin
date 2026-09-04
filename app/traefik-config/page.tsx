@@ -1,19 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { Copy, AlertTriangle } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
 import { PageBand, PageMain } from "@/components/page-band";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/toaster";
+import { useConfig } from "@/lib/hooks/use-config";
+import { useDomains } from "@/lib/hooks/use-domains";
 
-interface GlobalConfig {
-  sampleDomain: string;
-  certResolver: string;
-  globalMiddlewares: string[];
-  adminPanelDomain: string;
-  defaultEntrypoints?: string[];
-}
+/** Placeholders shown until a managed domain exists. */
+const SAMPLE_DOMAIN = "example.com";
+const SAMPLE_RESOLVER = "letsencrypt";
 
 function CodeBlock({
   fname,
@@ -45,23 +43,19 @@ function CodeBlock({
 }
 
 export default function TraefikConfigPage() {
-  const [config, setConfig] = useState<GlobalConfig>({
-    sampleDomain: "example.com",
-    certResolver: "letsencrypt",
-    globalMiddlewares: [],
-    adminPanelDomain: "localhost:3000",
-  });
-
+  // Global config (normalized by the shared hook) + the managed domains: the
+  // sample domain / resolver in the notes come from the default domain (or
+  // the first one), falling back to placeholders when none exist yet.
+  const { config } = useConfig();
+  const { domains, fetchDomains } = useDomains();
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/config");
-        if (res.ok) setConfig(await res.json());
-      } catch (error) {
-        console.error("Error fetching config:", error);
-      }
-    })();
-  }, []);
+    fetchDomains();
+  }, [fetchDomains]);
+
+  const sample = domains.find((d) => d.isDefault) ?? domains[0];
+  const sampleDomain = sample?.domain || SAMPLE_DOMAIN;
+  const certResolver = sample?.certResolver || SAMPLE_RESOLVER;
+  const samplePlaceholder = !sample;
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -184,16 +178,16 @@ networks:
                       Certificate resolver:
                     </strong>{" "}
                     Match the resolver name (
-                    <span className="mono">{config.certResolver}</span>) in the
+                    <span className="mono">{certResolver}</span>) in the
                     global config
                   </li>
                   <li className="text-[13px] text-[var(--fg-2)]">
                     <strong className="text-foreground">
                       Wildcard certificate:
                     </strong>{" "}
-                    A route for <span className="mono">{config.sampleDomain}</span>{" "}
-                    requests both <span className="mono">{config.sampleDomain}</span>{" "}
-                    and <span className="mono">*.{config.sampleDomain}</span>{" "}
+                    A route for <span className="mono">{sampleDomain}</span>{" "}
+                    requests both <span className="mono">{sampleDomain}</span>{" "}
+                    and <span className="mono">*.{sampleDomain}</span>{" "}
                     certificates
                   </li>
                   <li className="text-[13px] text-[var(--fg-2)]">
@@ -235,7 +229,12 @@ networks:
                     Sample domain
                   </span>
                   <p className="mono mt-0.5 text-foreground">
-                    {config.sampleDomain}
+                    {sampleDomain}
+                    {samplePlaceholder && (
+                      <span className="ml-2 font-sans text-[11px] text-[var(--meta)]">
+                        placeholder — no domains yet
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div>
@@ -243,7 +242,12 @@ networks:
                     Cert resolver
                   </span>
                   <p className="mono mt-0.5 text-foreground">
-                    {config.certResolver}
+                    {certResolver}
+                    {samplePlaceholder && (
+                      <span className="ml-2 font-sans text-[11px] text-[var(--meta)]">
+                        placeholder
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div>
@@ -281,10 +285,10 @@ networks:
               </div>
               <div className="mt-3 border-t border-[var(--border-soft)] pt-3 text-xs text-muted-foreground">
                 <strong className="text-foreground">Note:</strong> A route for{" "}
-                <span className="mono">{config.sampleDomain}</span> automatically
+                <span className="mono">{sampleDomain}</span> automatically
                 requests certificates for both{" "}
-                <span className="mono">{config.sampleDomain}</span> and{" "}
-                <span className="mono">*.{config.sampleDomain}</span> using the
+                <span className="mono">{sampleDomain}</span> and{" "}
+                <span className="mono">*.{sampleDomain}</span> using the
                 domain configuration.
               </div>
             </div>

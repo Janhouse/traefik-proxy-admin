@@ -66,13 +66,11 @@ import {
   itemId,
   parseDndId,
 } from "@/lib/route-rule-dnd";
-
-interface DomainLite {
-  id: string;
-  name: string;
-  domain: string;
-  isDefault: boolean;
-}
+import {
+  defaultDomainIdOf,
+  legacyHostTree,
+  type DomainLite,
+} from "@/hooks/host-tree";
 
 interface RouteRuleValue {
   domainId: string;
@@ -101,57 +99,6 @@ interface RouteRuleEditorProps {
   onChange: (v: RouteRuleValue) => void;
   onBlockedChange?: (blocked: boolean) => void;
   disabled?: boolean;
-}
-
-export function parseCustomList(json?: string | null): string[] {
-  if (!json) return [];
-  try {
-    const p = JSON.parse(json);
-    return Array.isArray(p) ? p.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Lift a service's host into the rule tree so the tree is self-contained:
- * - tree already carries a Host rule → stored tree as-is (native format);
- * - legacy sub/apex columns → one leading domain-backed Host rule;
- * - legacy "custom" hostnames → one free-text Host rule each (first AND,
- *   rest OR), preserving the old "any of these hosts" semantics.
- * A brand-new service (empty columns) yields one empty domain-backed Host
- * rule the user must fill. Shared with use-service-form so the form's
- * baseline matches what the editor emits on mount.
- */
-export function legacyHostTree(initial: {
-  domainId: string;
-  subdomain?: string | null;
-  hostnameMode: HostnameMode;
-  customHostnames?: string | null;
-  matchRules: RuleNode[];
-}): RuleNode[] {
-  if (treeHasHost(initial.matchRules)) return initial.matchRules;
-  if (initial.hostnameMode === "custom") {
-    const hosts = parseCustomList(initial.customHostnames);
-    const hostNodes: RuleNode[] = (hosts.length ? hosts : [""]).map(
-      (h, i): MatchRule => ({
-        type: "Host",
-        conn: i === 0 ? "AND" : "OR",
-        value: h,
-      })
-    );
-    return [...hostNodes, ...initial.matchRules];
-  }
-  const host: MatchRule =
-    initial.hostnameMode === "apex"
-      ? { type: "Host", conn: "AND", domainId: initial.domainId, apex: true }
-      : {
-          type: "Host",
-          conn: "AND",
-          domainId: initial.domainId,
-          sub: initial.subdomain || "",
-        };
-  return [host, ...initial.matchRules];
 }
 
 function newMatcher(type: MatchType, defaultDomainId: string): MatchRule {
@@ -201,8 +148,7 @@ export function RouteRuleEditor({
   // (e.g. right after changing entrypoints) clears itself within a cycle.
   const { conflicts } = useRouteConflicts(15_000);
 
-  const defaultDomainId =
-    (domains.find((d) => d.isDefault) || domains[0])?.id ?? "";
+  const defaultDomainId = defaultDomainIdOf(domains);
 
   const resolveDomain = useCallback<DomainResolver>(
     (id) => domains.find((d) => d.id === id)?.domain ?? null,
@@ -282,22 +228,37 @@ export function RouteRuleEditor({
   // the rule is meaningful
   const showRule = !!rule && !hostMissing;
 
-  // conflict: same primary host + overlapping entrypoint on another router
-  const conflict = useMemo(() => {
-    if (!conflicts?.reachable || !primaryHost) return null;
+  // conflict: ANY host in the tree claimed by another router on an
+  // overlapping entrypoint. Hostnames are case-insensitive, so compare
+  // lowercased on both sides.
+  const conflict = (() => {
+    if (!conflicts?.reachable || resolvedHosts.length === 0) return null;
+    const mine = new Map(resolvedHosts.map((h) => [h.toLowerCase(), h]));
     for (const r of conflicts.routers) {
       if (r.internal) continue; // our own cert-trigger routers are not conflicts
       if (r.managedServiceId && serviceId && r.managedServiceId === serviceId)
         continue; // this service
-      if (!r.hosts.includes(primaryHost)) continue;
+      const hit = r.hosts.find((h) => mine.has(h.toLowerCase()));
+      if (hit === undefined) continue;
       const overlap = r.entryPoints.some((e) => eps.includes(e));
       if (!overlap) continue;
-      return r;
+      // `hostOnly`: the foreign router's rule is nothing but Host() matchers,
+      // so it would collide outright. Read defensively until the API type
+      // carries the field.
+      const hostOnly = (r as { hostOnly?: boolean }).hostOnly === true;
+      return {
+        router: r,
+        host: mine.get(hit.toLowerCase()) ?? hit,
+        foreign: !r.managedServiceId,
+        // only a foreign, host-only router blocks the save; a router with
+        // extra matchers merely overlaps and gets a warning
+        blocking: !r.managedServiceId && hostOnly,
+      };
     }
     return null;
-  }, [conflicts, primaryHost, eps, serviceId]);
+  })();
 
-  const blocked = (!!conflict && !conflict.managedServiceId) || hostMissing;
+  const blocked = !!conflict?.blocking || hostMissing;
   useEffect(() => {
     onBlockedChange?.(blocked);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -347,32 +308,43 @@ export function RouteRuleEditor({
     <div className="flex flex-col gap-[18px]">
       {/* conflict banner */}
       {conflict && (
-        <div className={`conflict ${conflict.managedServiceId ? "managed" : "external"}`}>
+        <div
+          className={`conflict ${
+            conflict.blocking ? "external" : conflict.foreign ? "warn" : "managed"
+          }`}
+          role={conflict.blocking ? "alert" : "status"}
+        >
           <span className="c-ic">
             <AlertTriangle className="h-[17px] w-[17px]" />
           </span>
           <div className="c-body">
             <div className="c-title">
-              {conflict.managedServiceId
+              {!conflict.foreign
                 ? "This rule is already managed here"
-                : "Conflicts with a router outside this tool"}
+                : conflict.blocking
+                  ? "Conflicts with a router outside this tool"
+                  : "Overlaps with a router outside this tool"}
             </div>
             <div className="c-msg">
-              <code>Host(`{primaryHost}`)</code> on{" "}
+              <code>Host(`{conflict.host}`)</code> on{" "}
               <span className="prov-pill internal">
-                {conflict.entryPoints.filter((e) => eps.includes(e)).join(", ")}
+                {conflict.router.entryPoints
+                  .filter((e) => eps.includes(e))
+                  .join(", ")}
               </span>{" "}
               is already claimed by router{" "}
-              <code>{conflict.routerName}</code>
-              {conflict.managedServiceId
+              <code>{conflict.router.routerName}</code>
+              {!conflict.foreign
                 ? " — editing here would duplicate it."
-                : " defined outside the configurator — saving would collide at runtime."}
+                : conflict.blocking
+                  ? " defined outside the configurator — saving would collide at runtime."
+                  : " defined outside the configurator. Its rule has extra matchers, so requests may be split between the two — review before saving."}
             </div>
-            {conflict.managedServiceId ? (
+            {!conflict.foreign ? (
               <div className="c-actions">
                 <NextLink
                   className="text-[12px] font-semibold text-[var(--warn)] hover:underline"
-                  href={`/services/${conflict.managedServiceId}`}
+                  href={`/services/${conflict.router.managedServiceId}`}
                 >
                   View the owning service →
                 </NextLink>
@@ -380,10 +352,11 @@ export function RouteRuleEditor({
             ) : (
               <div className="c-meta">
                 Source{" "}
-                <span className={`prov-pill ${conflict.provider}`}>
-                  {conflict.provider}
+                <span className={`prov-pill ${conflict.router.provider}`}>
+                  {conflict.router.provider}
                 </span>{" "}
-                · read-only here · saving is blocked
+                · read-only here ·{" "}
+                {conflict.blocking ? "saving is blocked" : "saving is allowed"}
               </div>
             )}
           </div>
@@ -412,6 +385,7 @@ export function RouteRuleEditor({
         </div>
 
         <DndContext
+          id="route-rules"
           sensors={sensors}
           collisionDetection={closestCorners}
           onDragEnd={handleDragEnd}
@@ -566,6 +540,62 @@ function RootDropZone({
   );
 }
 
+/* ── Popover menu keyboard support ────────────────────────────────────────────
+ * Items are <button role="menuitem"> so Enter/Space activate natively; this
+ * adds roving Arrow/Home/End focus, and Escape/Tab close the menu. */
+
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
+
+function menuKeyDown(e: React.KeyboardEvent<HTMLElement>, close: () => void) {
+  const items = Array.from(
+    e.currentTarget.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR)
+  ).filter((el) => !(el as HTMLButtonElement).disabled);
+  if (items.length === 0) return;
+  const idx = items.indexOf(document.activeElement as HTMLElement);
+  const focusAt = (i: number) =>
+    items[((i % items.length) + items.length) % items.length]?.focus();
+  switch (e.key) {
+    case "ArrowDown":
+      e.preventDefault();
+      focusAt(idx + 1);
+      break;
+    case "ArrowUp":
+      e.preventDefault();
+      focusAt(idx < 0 ? items.length - 1 : idx - 1);
+      break;
+    case "Home":
+      e.preventDefault();
+      focusAt(0);
+      break;
+    case "End":
+      e.preventDefault();
+      focusAt(items.length - 1);
+      break;
+    case "Escape":
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      break;
+    case "Tab":
+      close();
+      break;
+  }
+}
+
+/** Focus the current (".sel") or first menu item once the menu opens. */
+function useFocusMenuOnOpen(
+  open: boolean,
+  menuRef: React.RefObject<HTMLDivElement | null>
+) {
+  useEffect(() => {
+    if (!open) return;
+    const el =
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitemradio"].sel') ??
+      menuRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR);
+    el?.focus();
+  }, [open, menuRef]);
+}
+
 /* ── Add-rule popover (used by the toolbar and each group header) ──────────── */
 
 function AddRuleMenu({
@@ -581,6 +611,8 @@ function AddRuleMenu({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -590,38 +622,60 @@ function AddRuleMenu({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
+  useFocusMenuOnOpen(open, menuRef);
+
+  const close = (refocus = true) => {
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
+  };
 
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
+        ref={triggerRef}
         className={
           compact
             ? "mg-btn"
             : "inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border bg-[var(--surface-2)] px-2.5 py-1.5 text-[12.5px] font-semibold hover:border-[var(--border-strong)]"
         }
         disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" && !open) {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
         <Plus className="h-3.5 w-3.5" /> {label}
       </button>
       {open && (
-        <div className="addmatch-menu">
+        <div
+          className="addmatch-menu"
+          role="menu"
+          aria-label={label}
+          ref={menuRef}
+          onKeyDown={(e) => menuKeyDown(e, () => close(e.key === "Escape"))}
+        >
           {MATCHER_TYPES.map((t) => (
-            <div
+            <button
+              type="button"
+              role="menuitem"
               key={t.key}
               className="tag-opt"
-              onMouseDown={(e) => {
-                e.preventDefault();
+              onClick={() => {
                 onAdd(t.key);
-                setOpen(false);
+                close();
               }}
             >
               <span className="flex flex-col">
                 <span className="nm">{t.label}</span>
                 <span className="ty">{t.desc}</span>
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -652,6 +706,8 @@ function HostComposer({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -661,6 +717,12 @@ function HostComposer({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
+  useFocusMenuOnOpen(open, menuRef);
+
+  const close = (refocus = true) => {
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
+  };
 
   const domainBacked = matcher.domainId !== undefined;
   const domainName =
@@ -724,9 +786,18 @@ function HostComposer({
           <span className="host-dot">.</span>
           <button
             type="button"
+            ref={triggerRef}
             className="host-domain"
             disabled={disabled}
+            aria-haspopup="menu"
+            aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown" && !open) {
+                e.preventDefault();
+                setOpen(true);
+              }
+            }}
           >
             <span>{domainName || "select domain"}</span>
             <ChevronDown className="caret" />
@@ -752,15 +823,23 @@ function HostComposer({
         </div>
       </div>
       {open && (
-        <div className="host-menu">
+        <div
+          className="host-menu"
+          role="menu"
+          aria-label="Managed domain"
+          ref={menuRef}
+          onKeyDown={(e) => menuKeyDown(e, () => close(e.key === "Escape"))}
+        >
           {domains.map((d) => (
-            <div
+            <button
+              type="button"
+              role="menuitemradio"
               key={d.id}
-              className={`host-opt ${d.id === matcher.domainId ? "sel cur" : ""}`}
-              onMouseDown={(e) => {
-                e.preventDefault();
+              className={`host-opt ${d.id === matcher.domainId ? "sel" : ""}`}
+              aria-checked={d.id === matcher.domainId}
+              onClick={() => {
                 onPatch(path, { domainId: d.id });
-                setOpen(false);
+                close();
               }}
             >
               <span className="hn">{d.domain}</span>
@@ -768,12 +847,13 @@ function HostComposer({
               <span className="ck">
                 <Check className="h-4 w-4" />
               </span>
-            </div>
+            </button>
           ))}
-          <div
+          <button
+            type="button"
+            role="menuitem"
             className="host-opt free"
-            onMouseDown={(e) => {
-              e.preventDefault();
+            onClick={() => {
               // switch to free-text: keep the composed hostname as the value
               onPatch(path, {
                 value: resolveHostValue(matcher, (id) =>
@@ -783,11 +863,11 @@ function HostComposer({
                 sub: undefined,
                 apex: undefined,
               });
-              setOpen(false);
+              close(false);
             }}
           >
             <span className="hn">Custom hostname…</span>
-          </div>
+          </button>
         </div>
       )}
     </div>
