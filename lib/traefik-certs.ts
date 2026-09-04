@@ -43,10 +43,14 @@ export async function getCertificates(): Promise<CertificatesResponse> {
 
   const now = Date.now();
   const certificates: RuntimeCertificate[] = raw
-    .map((c) => ({
+    .map((c) => {
+      // Go marshals a nil slice as JSON null — a cert with no SANs must not
+      // take the whole list down.
+      const sans = c.sans ?? [];
+      return {
       name: c.name,
-      commonName: c.commonName || c.sans[0] || "—",
-      sans: c.sans || [],
+      commonName: c.commonName || sans[0] || "—",
+      sans,
       issuer: c.issuerOrg || c.issuerCN || "—",
       serialNumber: c.serialNumber,
       notBefore: c.notBefore,
@@ -58,7 +62,8 @@ export async function getCertificates(): Promise<CertificatesResponse> {
       keySize: c.keySize ?? 0,
       signatureAlgorithm: c.signatureAlgorithm,
       status: c.status,
-    }))
+      };
+    })
     .sort((a, b) => a.daysRemaining - b.daysRemaining);
 
   return { configured: true, reachable: true, supported: true, certificates };

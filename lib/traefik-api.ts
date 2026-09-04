@@ -33,7 +33,18 @@ class TraefikApiError extends Error {
   }
 }
 
-async function traefikFetch<T>(path: string): Promise<T> {
+interface TraefikFetchResult<T> {
+  body: T;
+  headers: Headers;
+}
+
+/**
+ * One GET against the Traefik API. The abort timeout covers the whole
+ * exchange including the body read (`res.json()` runs inside the try).
+ */
+async function traefikFetchRaw<T>(
+  path: string
+): Promise<TraefikFetchResult<T>> {
   const base = getTraefikApiUrl();
   if (!base) throw new TraefikApiError("TRAEFIK_API_URL is not configured");
 
@@ -51,7 +62,7 @@ async function traefikFetch<T>(path: string): Promise<T> {
         res.status
       );
     }
-    return (await res.json()) as T;
+    return { body: (await res.json()) as T, headers: res.headers };
   } catch (err) {
     if (err instanceof TraefikApiError) throw err;
     const reason = err instanceof Error ? err.message : String(err);
@@ -59,6 +70,38 @@ async function traefikFetch<T>(path: string): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function traefikFetch<T>(path: string): Promise<T> {
+  return (await traefikFetchRaw<T>(path)).body;
+}
+
+const LIST_PER_PAGE = 500;
+const LIST_MAX_PAGES = 50;
+
+/**
+ * Fetch every page of a Traefik list endpoint. Traefik paginates all of its
+ * list routes (routers/services/middlewares/entrypoints/certificates) and
+ * signals a further page through the `X-Next-Page` header; we stop when it is
+ * absent, "1", or not greater than the current page, with a hard page cap so
+ * a misbehaving header can never loop forever.
+ */
+export async function traefikFetchAll<T>(path: string): Promise<T[]> {
+  const sep = path.includes("?") ? "&" : "?";
+  const all: T[] = [];
+  let page = 1;
+  for (let guard = 0; guard < LIST_MAX_PAGES; guard++) {
+    const { body, headers } = await traefikFetchRaw<T[]>(
+      `${path}${sep}page=${page}&per_page=${LIST_PER_PAGE}`
+    );
+    if (Array.isArray(body)) all.push(...body);
+    const nextRaw = headers.get("X-Next-Page");
+    if (!nextRaw) break;
+    const next = Number(nextRaw);
+    if (!Number.isFinite(next) || next <= 1 || next <= page) break;
+    page = next;
+  }
+  return all;
 }
 
 /* ── Types (subset of the Traefik v3 API surface) ─────────────────────────── */
@@ -91,6 +134,9 @@ export interface TraefikHttpService {
   loadBalancer?: {
     servers?: Array<{ url?: string; address?: string }>;
     passHostHeader?: boolean;
+    /** Present when the service has an active health check configured — only
+     * then is Traefik's serverStatus "UP" a real liveness signal. */
+    healthCheck?: Record<string, unknown> | null;
   };
   serverStatus?: Record<string, string>; // server url -> "UP" | "DOWN"
   usedBy?: string[];
@@ -196,23 +242,23 @@ export interface TraefikCertificate {
 /* ── Endpoint wrappers ────────────────────────────────────────────────────── */
 
 export const getEntrypoints = () =>
-  traefikFetch<TraefikEntryPoint[]>("/api/entrypoints");
+  traefikFetchAll<TraefikEntryPoint>("/api/entrypoints");
 export const getHttpRouters = () =>
-  traefikFetch<TraefikHttpRouter[]>("/api/http/routers");
+  traefikFetchAll<TraefikHttpRouter>("/api/http/routers");
 export const getHttpServices = () =>
-  traefikFetch<TraefikHttpService[]>("/api/http/services");
+  traefikFetchAll<TraefikHttpService>("/api/http/services");
 export const getHttpMiddlewares = () =>
-  traefikFetch<TraefikMiddleware[]>("/api/http/middlewares");
+  traefikFetchAll<TraefikMiddleware>("/api/http/middlewares");
 export const getTcpRouters = () =>
-  traefikFetch<TraefikTcpRouter[]>("/api/tcp/routers");
+  traefikFetchAll<TraefikTcpRouter>("/api/tcp/routers");
 export const getTcpServices = () =>
-  traefikFetch<TraefikTcpService[]>("/api/tcp/services");
+  traefikFetchAll<TraefikTcpService>("/api/tcp/services");
 export const getTcpMiddlewares = () =>
-  traefikFetch<TraefikMiddleware[]>("/api/tcp/middlewares");
+  traefikFetchAll<TraefikMiddleware>("/api/tcp/middlewares");
 export const getUdpRouters = () =>
-  traefikFetch<TraefikUdpRouter[]>("/api/udp/routers");
+  traefikFetchAll<TraefikUdpRouter>("/api/udp/routers");
 export const getUdpServices = () =>
-  traefikFetch<TraefikUdpService[]>("/api/udp/services");
+  traefikFetchAll<TraefikUdpService>("/api/udp/services");
 export const getVersion = () => traefikFetch<TraefikVersion>("/api/version");
 export const getOverview = () => traefikFetch<TraefikOverview>("/api/overview");
 
@@ -279,41 +325,5 @@ export function probeTcp(
  * paging through results with the X-Next-Page header. Throws a TraefikApiError
  * with status 404 on older Traefik that lacks the route.
  */
-export async function getCertificates(): Promise<TraefikCertificate[]> {
-  const base = getTraefikApiUrl();
-  if (!base) throw new TraefikApiError("TRAEFIK_API_URL is not configured");
-
-  const all: TraefikCertificate[] = [];
-  let page = 1;
-  for (let guard = 0; guard < 100; guard++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(`${base}/api/certificates?page=${page}&per_page=100`, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-      });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new TraefikApiError(
-        `Failed to reach Traefik API /api/certificates: ${reason}`
-      );
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) {
-      throw new TraefikApiError(
-        `Traefik API /api/certificates responded ${res.status}`,
-        res.status
-      );
-    }
-    const items = (await res.json()) as TraefikCertificate[];
-    all.push(...items);
-    const next = Number(res.headers.get("X-Next-Page") || "0");
-    if (!Number.isFinite(next) || next <= page) break;
-    page = next;
-  }
-  return all;
-}
+export const getCertificates = () =>
+  traefikFetchAll<TraefikCertificate>("/api/certificates");

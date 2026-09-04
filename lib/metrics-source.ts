@@ -86,10 +86,11 @@ class MetricsScheduler {
       );
       return;
     }
-    this.isRunning = true;
     const sec = intervalSeconds();
     console.log(`Starting Traefik metrics scraper - every ${sec}s`);
-    await this.tick(); // first tick seeds the baseline (no rows emitted)
+    // Arm the interval BEFORE the seed tick so a failing seed (DB down at
+    // boot, bad metrics URL, …) can never leave the scraper permanently
+    // "running" without a timer.
     this.interval = setInterval(async () => {
       try {
         await this.tick();
@@ -97,6 +98,15 @@ class MetricsScheduler {
         console.error("Error in metrics scheduler:", error);
       }
     }, sec * 1000);
+    this.isRunning = true;
+    try {
+      await this.tick(); // first tick seeds the baseline (no rows emitted)
+    } catch (error) {
+      console.warn(
+        "Metrics scraper seed tick failed; will retry on the next interval:",
+        error
+      );
+    }
   }
 
   stop() {
@@ -221,7 +231,14 @@ export const metricsScheduler = new MetricsScheduler();
 export async function getMetricsSnapshot(): Promise<MetricsResponse> {
   const generatedAt = new Date().toISOString();
   if (!isMetricsConfigured()) {
-    return { configured: false, available: false, window: WINDOW_SEC, generatedAt, services: {} };
+    return {
+      configured: false,
+      available: false,
+      lastScrapeOk: false,
+      window: WINDOW_SEC,
+      generatedAt,
+      services: {},
+    };
   }
 
   const windowMs = WINDOW_SEC * 1000;
@@ -232,7 +249,10 @@ export async function getMetricsSnapshot(): Promise<MetricsResponse> {
     .from(routerMetricSamples)
     .where(gte(routerMetricSamples.ts, windowStart));
 
-  const available = lastScrapeOk && (lastRouterLinesSeen > 0 || rows.length > 0);
+  // Stored samples inside the window are usable data regardless of whether
+  // the very latest scrape happened to fail; a single hiccup must not blank
+  // the UI. Without rows, fall back to "the last scrape saw router series".
+  const available = rows.length > 0 || (lastScrapeOk && lastRouterLinesSeen > 0);
 
   const byService = new Map<string, typeof rows>();
   for (const r of rows) {
@@ -287,5 +307,12 @@ export async function getMetricsSnapshot(): Promise<MetricsResponse> {
     };
   }
 
-  return { configured: true, available, window: WINDOW_SEC, generatedAt, services: out };
+  return {
+    configured: true,
+    available,
+    lastScrapeOk,
+    window: WINDOW_SEC,
+    generatedAt,
+    services: out,
+  };
 }

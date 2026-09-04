@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /* Pins the two metrics changes for per-entrypoint split routers:
  * 1. scrape ticks map EVERY router name of a service (suffixed split names)
@@ -71,11 +71,12 @@ vi.mock("@/lib/traefik-config", () => ({
 
 vi.mock("@/lib/prometheus", () => ({
   fetchMetricsText: vi.fn(async () => "prom-text"),
-  parseProm: () => h.state.promSamples,
+  parseProm: vi.fn(() => h.state.promSamples),
   stripProvider: (s: string) => s.split("@")[0],
 }));
 
 import { getMetricsSnapshot, metricsScheduler } from "@/lib/metrics-source";
+import { fetchMetricsText, parseProm } from "@/lib/prometheus";
 
 const tick = () =>
   (metricsScheduler as unknown as { tick(): Promise<void> }).tick();
@@ -93,6 +94,14 @@ beforeEach(() => {
   h.state.promSamples = [];
   h.state.inserted = [];
   h.state.routerNames = new Map();
+  vi.mocked(fetchMetricsText).mockClear();
+  vi.mocked(fetchMetricsText).mockImplementation(async () => "prom-text");
+  vi.mocked(parseProm).mockImplementation(() => h.state.promSamples);
+});
+
+afterEach(() => {
+  metricsScheduler.stop();
+  vi.useRealTimers();
 });
 
 describe("scrape tick — split-router mapping", () => {
@@ -166,5 +175,53 @@ describe("read path — per-tick seconds dedup", () => {
     // 15 requests over ONE 60s tick = 0.25 req/s. Without the dedup the
     // denominator doubles (two rows, same ts) and the rate halves to 0.13.
     expect(svc.reqPerSec).toBeCloseTo(15 / 60, 2);
+  });
+});
+
+describe("scheduler start — failing seed tick", () => {
+  it("still arms the interval and keeps scraping", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The seed tick blows up past the fetch (fetch errors are already
+    // swallowed inside tick) — a parse failure is the simplest stand-in.
+    vi.mocked(parseProm).mockImplementationOnce(() => {
+      throw new Error("seed boom");
+    });
+
+    await metricsScheduler.start();
+    expect(metricsScheduler.isActive()).toBe(true);
+    expect(vi.mocked(fetchMetricsText)).toHaveBeenCalledTimes(1);
+
+    // Next interval: a normal tick runs, proving the timer was armed.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(vi.mocked(fetchMetricsText)).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("read path — availability vs last scrape", () => {
+  it("stays available on stored rows when the latest scrape failed", async () => {
+    vi.mocked(fetchMetricsText).mockRejectedValueOnce(new Error("down"));
+    await tick(); // flips lastScrapeOk to false
+
+    h.state.sampleRows = [
+      {
+        serviceId: "svc-1",
+        router: "r",
+        ts: new Date(Date.now() - 1000),
+        req2xx: 1, req3xx: 0, req4xx: 0, req5xx: 0, reqOther: 0,
+        durSumMs: 0, durCount: 0,
+      },
+    ];
+    const snap = await getMetricsSnapshot();
+    expect(snap.configured).toBe(true);
+    expect(snap.available).toBe(true);
+    expect(snap.lastScrapeOk).toBe(false);
+  });
+
+  it("is unavailable with no rows and no router series seen", async () => {
+    h.state.promSamples = []; // scrape ok but router labels disabled
+    await tick();
+    const snap = await getMetricsSnapshot();
+    expect(snap).toMatchObject({ available: false, lastScrapeOk: true });
   });
 });

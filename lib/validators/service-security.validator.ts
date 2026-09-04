@@ -47,6 +47,19 @@ export function validateCreateServiceSecurityConfig(data: unknown): ValidationRe
   return { isValid: errors.length === 0, errors };
 }
 
+/** Priority is an integer column with a 0..100 range. */
+function validatePriority(priority: unknown, errors: string[]): void {
+  if (priority === undefined) return;
+  if (
+    typeof priority !== "number" ||
+    !Number.isInteger(priority) ||
+    priority < 0 ||
+    priority > 100
+  ) {
+    errors.push("Priority must be an integer between 0 and 100");
+  }
+}
+
 export function validateUpdateServiceSecurityConfig(data: unknown): ValidationResult {
   const errors: string[] = [];
 
@@ -57,9 +70,7 @@ export function validateUpdateServiceSecurityConfig(data: unknown): ValidationRe
   const request = data as UpdateServiceSecurityConfigRequest;
 
   // Validate priority if provided
-  if (request.priority !== undefined && (typeof request.priority !== "number" || request.priority < 0 || request.priority > 100)) {
-    errors.push("Priority must be a number between 0 and 100");
-  }
+  validatePriority(request.priority, errors);
 
   // Validate isEnabled if provided
   if (request.isEnabled !== undefined && typeof request.isEnabled !== "boolean") {
@@ -67,6 +78,48 @@ export function validateUpdateServiceSecurityConfig(data: unknown): ValidationRe
   }
 
   return { isValid: errors.length === 0, errors };
+}
+
+/** The whitelisted PATCH body: only `isEnabled` and `priority` may be set. */
+export interface PatchServiceSecurityConfigRequest {
+  isEnabled?: boolean;
+  priority?: number;
+}
+
+export interface PatchValidationResult extends ValidationResult {
+  /** The whitelisted body (unknown keys dropped); undefined when invalid. */
+  data?: PatchServiceSecurityConfigRequest;
+}
+
+/**
+ * Validate and whitelist a PATCH body. A missing / null / non-object body is
+ * valid and yields an empty object (the caller treats that as "toggle").
+ * `config` is not patchable — use PUT — and is rejected outright.
+ */
+export function validatePatchServiceSecurityConfig(data: unknown): PatchValidationResult {
+  const errors: string[] = [];
+
+  if (data === null || data === undefined) {
+    return { isValid: true, errors, data: {} };
+  }
+  if (typeof data !== "object" || Array.isArray(data)) {
+    return { isValid: false, errors: ["Invalid request body"] };
+  }
+
+  const body = data as Record<string, unknown>;
+  if (body.config !== undefined) {
+    errors.push("config cannot be changed via PATCH; use PUT");
+  }
+  if (body.isEnabled !== undefined && typeof body.isEnabled !== "boolean") {
+    errors.push("isEnabled must be a boolean");
+  }
+  validatePriority(body.priority, errors);
+  if (errors.length > 0) return { isValid: false, errors };
+
+  const out: PatchServiceSecurityConfigRequest = {};
+  if (typeof body.isEnabled === "boolean") out.isEnabled = body.isEnabled;
+  if (typeof body.priority === "number") out.priority = body.priority;
+  return { isValid: true, errors, data: out };
 }
 
 function validateSecurityTypeConfig(securityType: SecurityType, config: Record<string, unknown>): string[] {

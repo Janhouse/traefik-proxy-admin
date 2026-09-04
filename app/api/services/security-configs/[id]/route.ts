@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ServiceSecurityService } from "@/lib/services/service-security.service";
 import {
   validateUpdateServiceSecurityConfig,
+  validatePatchServiceSecurityConfig,
   validateConfigId,
   type ValidationResult,
 } from "@/lib/validators/service-security.validator";
@@ -141,17 +142,19 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Honor an explicit { isEnabled } / { priority } (set the value), and only
     // fall back to flipping when no body is sent. This fixes both the enable
     // switch (set, not flip) and drag-reorder (persist priority, not toggle).
-    const body = await request
-      .json()
-      .catch(() => ({}) as Record<string, unknown>);
-    if (
-      typeof body.isEnabled === "boolean" ||
-      typeof body.priority === "number"
-    ) {
-      const updated = await ServiceSecurityService.updateSecurityConfig(
-        id,
-        body as UpdateServiceSecurityConfigRequest
+    // The body is whitelisted to those two fields and validated like PUT;
+    // an empty / null / unparsable body means "toggle".
+    const body: unknown = await request.json().catch(() => null);
+    const validation = validatePatchServiceSecurityConfig(body);
+    if (!validation.isValid) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validation.errors },
+        { status: 400 }
       );
+    }
+    const patch = validation.data ?? {};
+    if (patch.isEnabled !== undefined || patch.priority !== undefined) {
+      const updated = await ServiceSecurityService.updateSecurityConfig(id, patch);
       return NextResponse.json(updated);
     }
 

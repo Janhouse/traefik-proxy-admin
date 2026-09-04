@@ -28,6 +28,20 @@ import type {
 
 /* ── Backend health for the admin's own services ──────────────────────────── */
 
+/** Normalized server URLs belonging to services that have a Traefik health
+ * check configured (only those have a trustworthy serverStatus "UP"). */
+function indexHealthChecked(httpServices: TraefikHttpService[]): Set<string> {
+  const out = new Set<string>();
+  for (const svc of httpServices) {
+    if (!svc.loadBalancer?.healthCheck) continue;
+    for (const srv of svc.loadBalancer.servers || []) {
+      const u = srv.url || srv.address;
+      if (u) out.add(normalizeServerUrl(u));
+    }
+  }
+  return out;
+}
+
 /**
  * Resolve per-service backend health. Prefers Traefik's `serverStatus`
  * (populated when the service has a health check); otherwise falls back to an
@@ -47,11 +61,13 @@ export async function getBackendHealthMap(): Promise<BackendHealthResponse> {
     .from(services);
 
   let index = new Map<string, string>();
+  let checked = new Set<string>();
   let reachable = false;
   if (configured) {
     try {
       const httpServices = await getHttpServices();
       index = indexServerStatus(httpServices);
+      checked = indexHealthChecked(httpServices);
       reachable = true;
     } catch {
       reachable = false;
@@ -76,15 +92,23 @@ export async function getBackendHealthMap(): Promise<BackendHealthResponse> {
         return;
       }
 
+      // An UP from a service that actually has a health check configured is
+      // equally authoritative — don't second-guess it with a TCP probe.
+      if (st === "UP" && checked.has(url)) {
+        result[s.id] = { state: "up", up: 1, total: 1, source: "traefik" };
+        return;
+      }
+
       // Otherwise rely on a live TCP probe for real reachability: Traefik
       // reports servers UP by default even without a health check, so its UP
-      // is not a true liveness signal on its own.
+      // is not a true liveness signal on its own. The probe decided here, so
+      // the result is attributed to it.
       const ok = await probeTcp(s.targetIp, s.targetPort);
       result[s.id] = {
         state: ok ? "up" : "down",
         up: ok ? 1 : 0,
         total: 1,
-        source: st === "UP" ? "traefik" : "probe",
+        source: "probe",
       };
     })
   );
@@ -152,36 +176,76 @@ function emptyRuntime(
   };
 }
 
+/** Unwrap a settled result: value on success, fallback + recorded reason on
+ * rejection. */
+function settled<T>(
+  r: PromiseSettledResult<T>,
+  fallback: T,
+  label: string,
+  failures: Array<{ label: string; reason: string }>
+): T {
+  if (r.status === "fulfilled") return r.value;
+  const reason =
+    r.reason instanceof Error ? r.reason.message : String(r.reason);
+  failures.push({ label, reason });
+  return fallback;
+}
+
+function firstRejection(results: readonly PromiseSettledResult<unknown>[]): string {
+  const r = results.find(
+    (x): x is PromiseRejectedResult => x.status === "rejected"
+  );
+  return r?.reason instanceof Error ? r.reason.message : String(r?.reason);
+}
+
 export async function getRuntimeSnapshot(): Promise<RuntimeResponse> {
   const configured = isTraefikApiConfigured();
   if (!configured) return emptyRuntime(false, false);
 
   try {
-    const [
-      entrypoints,
-      httpRouters,
-      httpServices,
-      middlewares,
-      tcpRouters,
-      tcpServices,
-      tcpMiddlewares,
-      udpRouters,
-      udpServices,
-      version,
-      overview,
-    ] = await Promise.all([
-      getEntrypoints().catch(() => []),
-      getHttpRouters().catch(() => []),
-      getHttpServices().catch(() => []),
-      getHttpMiddlewares().catch(() => []),
-      getTcpRouters().catch(() => []),
-      getTcpServices().catch(() => []),
-      getTcpMiddlewares().catch(() => []),
-      getUdpRouters().catch(() => []),
-      getUdpServices().catch(() => []),
-      getVersion().catch(() => ({}) as Awaited<ReturnType<typeof getVersion>>),
-      getOverview().catch(() => null),
-    ]);
+    const results = await Promise.allSettled([
+      getEntrypoints(),
+      getHttpRouters(),
+      getHttpServices(),
+      getHttpMiddlewares(),
+      getTcpRouters(),
+      getTcpServices(),
+      getTcpMiddlewares(),
+      getUdpRouters(),
+      getUdpServices(),
+      getVersion(),
+      getOverview(),
+    ] as const);
+
+    // The overview and HTTP router list are the core of the snapshot: if
+    // either failed, Traefik is effectively unreachable and we say so instead
+    // of rendering an empty-but-"reachable" explorer. Every call failing is
+    // the same verdict.
+    const core: Array<{ label: string; reason: string }> = [];
+    const overview = settled(results[10], null, "/api/overview", core);
+    const httpRouters = settled(results[1], [], "/api/http/routers", core);
+    if (core.length > 0 || results.every((r) => r.status === "rejected")) {
+      return emptyRuntime(true, false, core[0]?.reason ?? firstRejection(results));
+    }
+
+    // Secondary lists may degrade individually; the failure is surfaced as a
+    // warning while the rest of the snapshot is still shown.
+    const secondary: Array<{ label: string; reason: string }> = [];
+    const entrypoints = settled(results[0], [], "/api/entrypoints", secondary);
+    const httpServices = settled(results[2], [], "/api/http/services", secondary);
+    const middlewares = settled(results[3], [], "/api/http/middlewares", secondary);
+    const tcpRouters = settled(results[4], [], "/api/tcp/routers", secondary);
+    const tcpServices = settled(results[5], [], "/api/tcp/services", secondary);
+    const tcpMiddlewares = settled(results[6], [], "/api/tcp/middlewares", secondary);
+    const udpRouters = settled(results[7], [], "/api/udp/routers", secondary);
+    const udpServices = settled(results[8], [], "/api/udp/services", secondary);
+    const version = settled(
+      results[9],
+      {} as Awaited<ReturnType<typeof getVersion>>,
+      "/api/version",
+      secondary
+    );
+    const warnings = secondary.map((f) => `${f.label}: ${f.reason}`);
 
     // service name -> health (for router rows). Index by both the fully
     // qualified name ("svc@http") and the bare name, since a router's
@@ -283,6 +347,7 @@ export async function getRuntimeSnapshot(): Promise<RuntimeResponse> {
     return {
       configured: true,
       reachable: true,
+      ...(warnings.length > 0 ? { warnings } : {}),
       syncedAt: new Date().toISOString(),
       version: { version: version.Version, codename: version.Codename },
       counts: {
