@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { stringify } from "yaml";
 import type {
   ManagedCertResolver,
@@ -141,73 +141,4 @@ export function serializeSecretsEnv(secrets: Record<string, string>): string {
       })
       .join("\n") + "\n"
   );
-}
-
-/** Host portion (lowercased, no port, no trailing dot) of an authority like
- * "admin.example.com:443", "admin.example.com." or "[::1]:3000". Traefik's
- * Host() matcher ignores a trailing dot but forwards the header verbatim, so
- * the FQDN form must compare equal to the bare name. */
-export function hostOnly(authority: string | null | undefined): string {
-  if (!authority) return "";
-  const a = authority.trim().toLowerCase();
-  const m = a.match(/^(\[[^\]]+\]|[^:]+)(?::\d+)?$/);
-  const host = m ? m[1] : a;
-  return host.startsWith("[") ? host : host.replace(/\.+$/, "");
-}
-
-/**
- * True if a request reached the panel via its PUBLIC admin domain — i.e.
- * through Traefik's admin route, which is the only way the panel is exposed
- * to the web (port 3000 is unpublished). The auto-generated admin router
- * matches Host(adminPanelDomain) and passes the host through, so a web
- * request always arrives with that Host; the in-network wrapper reaches the
- * panel by its internal service name, so its Host never matches.
- *
- * We can't key off X-Forwarded-* presence: Next.js synthesizes those headers
- * even for direct connections, so they're useless as a proxy signal here.
- */
-export function isPublicDomainRequest(
-  headers: Headers,
-  adminPanelDomain: string
-): boolean {
-  const pub = hostOnly(adminPanelDomain);
-  if (!pub) return false;
-  return (
-    hostOnly(headers.get("host")) === pub ||
-    hostOnly(headers.get("x-forwarded-host")) === pub
-  );
-}
-
-/* ── Wrapper bearer token ─────────────────────────────────────────────────── */
-
-/** Shared secret between the panel and the Traefik wrapper (compose passes
- * MANAGED_WRAPPER_TOKEN to both). Trimmed; null when unset/blank. */
-export function wrapperToken(): string | null {
-  const raw = process.env.MANAGED_WRAPPER_TOKEN?.trim();
-  return raw ? raw : null;
-}
-
-/** Constant-time equality of two strings. Both sides are hashed first so
- * neither the comparison nor a length mismatch leaks anything about the
- * expected token. */
-export function safeEqualStrings(a: string, b: string): boolean {
-  const ha = createHash("sha256").update(a, "utf8").digest();
-  const hb = createHash("sha256").update(b, "utf8").digest();
-  return timingSafeEqual(ha, hb);
-}
-
-/**
- * True when the request carries `Authorization: Bearer <MANAGED_WRAPPER_TOKEN>`.
- * False when the token isn't configured (callers must fail closed — in
- * managed mode the env var is required precisely so the credential endpoint
- * can never be open). The Host heuristic (`isPublicDomainRequest`) stays as
- * defense in depth; this is the actual gate.
- */
-export function isAuthorizedWrapperRequest(headers: Headers): boolean {
-  const expected = wrapperToken();
-  if (!expected) return false;
-  const auth = headers.get("authorization") ?? "";
-  const m = auth.match(/^Bearer\s+(\S+)\s*$/i);
-  if (!m) return false;
-  return safeEqualStrings(m[1], expected);
 }

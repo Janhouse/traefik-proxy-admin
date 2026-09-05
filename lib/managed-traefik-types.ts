@@ -66,8 +66,17 @@ export interface ManagedModeResponse {
   adminAuthConfigured: boolean;
   config: ManagedStaticConfig | null;
   /** Names of stored DNS-provider credentials. Values are write-only — they
-   * are NEVER returned through the web; only the in-network wrapper reads them. */
+   * are NEVER returned through the web. The panel materialises them into an
+   * env file on a tmpfs mount shared with the Traefik container. */
   secretNames: string[];
+  /** State of that materialised env file (managed mode only). */
+  secretsEnv?: {
+    materialized: boolean;
+    writtenAt: string | null;
+    /** The file on the mount does not match the stored credentials (or is
+     * missing) — the wrapper has nothing new to pick up yet. */
+    stale: boolean;
+  };
   /** True when the encrypted credential file exists but cannot be decrypted
    * with the current MANAGED_SECRETS_KEY (key rotated / file corrupt). The
    * stored values are lost; PUT /secrets with `reset: true` starts over. */

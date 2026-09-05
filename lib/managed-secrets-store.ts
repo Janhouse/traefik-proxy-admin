@@ -5,7 +5,8 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { hashText, serializeSecretsEnv } from "@/lib/managed-traefik";
 import { dirname, join } from "node:path";
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -52,6 +53,58 @@ export function isSecretsUndecryptableError(
       error !== null &&
       (error as { undecryptable?: unknown }).undecryptable === true)
   );
+}
+
+/* ── Materialised env for the Traefik wrapper ─────────────────────────────
+ * Traefik (lego) needs the DNS-provider credentials as environment variables
+ * in ITS container. There is deliberately NO HTTP endpoint for that: the panel
+ * decrypts the store and writes a shell-sourceable env file into a directory
+ * that the compose bundle backs with a tmpfs volume shared with the Traefik
+ * service (mounted read-only there). Plaintext therefore only ever exists in
+ * RAM — never on a persistent volume, never on the network — and after a host
+ * reboot the panel simply rewrites it at startup. */
+const DEFAULT_ENV_FILE = "/managed-secrets/traefik.env";
+
+export function envFilePath(): string {
+  return process.env.MANAGED_SECRETS_ENV_FILE?.trim() || DEFAULT_ENV_FILE;
+}
+
+export interface SecretsEnvStatus {
+  path: string;
+  /** The env file exists on the shared mount. */
+  materialized: boolean;
+  writtenAt: string | null;
+  /** hashText() of the file contents, for comparing with the stored meta hash. */
+  hash: string | null;
+}
+
+/** Non-throwing: what is currently on the shared mount. */
+export async function secretsEnvStatus(): Promise<SecretsEnvStatus> {
+  const path = envFilePath();
+  try {
+    const [st, body] = await Promise.all([stat(path), readFile(path, "utf8")]);
+    return { path, materialized: true, writtenAt: st.mtime.toISOString(), hash: hashText(body) };
+  } catch {
+    return { path, materialized: false, writtenAt: null, hash: null };
+  }
+}
+
+async function materializeUnlocked(values: Record<string, string>): Promise<void> {
+  await writeFileAtomic(envFilePath(), serializeSecretsEnv(values));
+}
+
+/**
+ * (Re)write the env file from the encrypted store. Called at startup (the
+ * tmpfs is empty after a reboot) and after every credential write. Throws
+ * SecretsUndecryptableError / key errors like readManagedSecrets — the caller
+ * decides how loudly to report; an existing env file is left untouched then.
+ */
+export async function materializeManagedSecrets(): Promise<SecretsEnvStatus> {
+  return withSecretsLock(async () => {
+    const values = await readManagedSecrets();
+    await materializeUnlocked(values);
+    return secretsEnvStatus();
+  });
 }
 
 function filePath(): string {
@@ -256,6 +309,17 @@ async function writeUnlocked(values: Record<string, string>): Promise<void> {
     env = { v: FORMAT_VERSION, alg: "plain", data: json };
   }
   await writeFileAtomic(filePath(), JSON.stringify(env));
+  // The store is the source of truth; the env file is derived from it. A
+  // failed materialisation is logged and surfaced via secretsEnvStatus()
+  // (the managed status shows it as stale) rather than failing the save.
+  try {
+    await materializeUnlocked(values);
+  } catch (error) {
+    console.error(
+      "Stored credentials but could not write the Traefik env file:",
+      error instanceof Error ? error.message : "unknown error"
+    );
+  }
 }
 
 /**

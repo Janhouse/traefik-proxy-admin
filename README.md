@@ -62,8 +62,8 @@ and Traefik together with sane defaults: `web` (:80, redirecting to https),
 
 ```bash
 cp docker/managed/.env.example .env
-# set POSTGRES_PASSWORD, ADMIN_PANEL_AUTH (htpasswd entry), MANAGED_SECRETS_KEY,
-# MANAGED_WRAPPER_TOKEN and ADMIN_PANEL_DOMAIN — see the comments in the file
+# set POSTGRES_PASSWORD, ADMIN_PANEL_AUTH (htpasswd entry), MANAGED_SECRETS_KEY
+# and ADMIN_PANEL_DOMAIN — see the comments in the file
 docker compose -f docker-compose.managed.yml up -d
 ```
 
@@ -75,8 +75,8 @@ How it works:
   changes (static config cannot be hot-reloaded). The config page shows
   whether Traefik has picked up the latest config yet.
 - **Rollback**: once Traefik has run a fetched config for ~20 s the wrapper
-  snapshots it (plus the matching credentials) as *last-good* under
-  `/data/wrapper` on the Traefik volume. If Traefik exits before a newly
+  snapshots it as *last-good* under `/data/wrapper` on the Traefik volume
+  (the config only — credentials are never written to persistent storage). If Traefik exits before a newly
   applied config reaches that grace period, the wrapper logs a loud warning,
   restores last-good and restarts from it — and keeps ignoring that rejected
   config until the panel serves a different one. Last-good is also used at
@@ -90,17 +90,21 @@ How it works:
   credentials (e.g. `CF_DNS_API_TOKEN` for Cloudflare); set them right there
   under **DNS provider credentials** — any number of them, for one or several
   resolvers/providers. Credentials are **write-only**: they can be set or
-  replaced through the web but are never returned; only the Traefik wrapper
-  can read them, from `/api/traefik/managed/secrets-env`, which requires the
-  shared bearer token `MANAGED_WRAPPER_TOKEN` (compose hands the same value to
-  both services) and additionally refuses any request that arrives via the
-  public admin domain. Values are stored **encrypted at rest** in a file on
-  the panel volume (AES-256-GCM with the envelope header bound as
-  authenticated data, keyed by `MANAGED_SECRETS_KEY`, at least 32 characters)
-  — never in the database, which keeps only the names. The wrapper decrypts
-  them, injects them as env vars, and restarts Traefik when they change. You
-  can still hard-code them as env vars on the `traefik` service instead, if
-  you prefer.
+  replaced through the web but are never returned, and there is **no HTTP
+  endpoint that serves them** — not to the wrapper, not to anyone. Values are
+  stored **encrypted at rest** in a file on the panel volume (AES-256-GCM with
+  the envelope header bound as authenticated data, keyed by
+  `MANAGED_SECRETS_KEY`, at least 32 characters) — never in the database,
+  which keeps only the names. To hand them to Traefik the panel decrypts them
+  and writes a shell-sourceable env file (mode 0600) onto the `managed_secrets`
+  volume, which compose backs with a **tmpfs** and mounts read-only into the
+  Traefik container: the plaintext exists in RAM only, never on disk and never
+  on the network. The wrapper polls that file, injects the variables as env,
+  and restarts Traefik when they change (within its 30 s poll). After a host
+  reboot the tmpfs is empty until the panel rewrites it on startup. The
+  managed status reports `secretsEnv: { materialized, writtenAt, stale }`.
+  You can still hard-code credentials as env vars on the `traefik` service
+  instead, if you prefer.
 - **Rotating `MANAGED_SECRETS_KEY`** makes the stored credentials
   unreadable — they are gone, not recoverable. The managed status then
   reports `secretsUndecryptable: true`; saving credentials again with
@@ -112,11 +116,11 @@ How it works:
   the Traefik API (8080) stay on the internal compose network; the panel is
   reachable only through an auto-generated Traefik route on your
   *Admin Panel Domain*, protected by HTTP basic auth from `ADMIN_PANEL_AUTH`
-  (required — the bundle refuses to start without it). The wrapper-to-panel
-  traffic (static config and credentials) is **plain HTTP inside the compose
-  network**; the credential endpoint is gated by `MANAGED_WRAPPER_TOKEN`
-  (compared in constant time) and by the Host check, and the plaintext
-  credential env lives on a `tmpfs` (`/run`) in the Traefik container.
+  (required — the bundle refuses to start without it). The wrapper fetches
+  the **static config** (no secrets in it) over plain HTTP inside the compose
+  network; **credentials never travel over the network** — they move through
+  the in-memory `managed_secrets` volume only, and the wrapper's working copy
+  lives on a `tmpfs` (`/run`) in the Traefik container.
 
 First-time setup:
 

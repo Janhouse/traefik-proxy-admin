@@ -153,9 +153,6 @@ const MANAGED_SECRETS_LEGACY_KEY = "managed_secrets";
 export interface ManagedStaticState {
   lastFetchedAt: string | null;
   lastFetchedHash: string | null;
-  /** Hash of the secrets env the wrapper last fetched (separate from the
-   * static config; either changing requires a Traefik restart). */
-  lastFetchedSecretsHash: string | null;
 }
 
 export async function getManagedStaticConfig(): Promise<ManagedStaticConfig> {
@@ -191,11 +188,10 @@ export async function getManagedStaticState(): Promise<ManagedStaticState> {
     return {
       lastFetchedAt: saved?.lastFetchedAt ?? null,
       lastFetchedHash: saved?.lastFetchedHash ?? null,
-      lastFetchedSecretsHash: saved?.lastFetchedSecretsHash ?? null,
     };
   } catch (error) {
     console.error("Error fetching managed static state:", error);
-    return { lastFetchedAt: null, lastFetchedHash: null, lastFetchedSecretsHash: null };
+    return { lastFetchedAt: null, lastFetchedHash: null };
   }
 }
 
@@ -213,15 +209,6 @@ export async function recordManagedStaticFetch(hash: string): Promise<void> {
   );
 }
 
-export async function recordManagedSecretsFetch(hash: string): Promise<void> {
-  const prev = await getManagedStaticState();
-  const state: ManagedStaticState = { ...prev, lastFetchedSecretsHash: hash };
-  await upsertConfigValue(
-    MANAGED_STATIC_STATE_KEY,
-    JSON.stringify(state),
-    "Last static config fetch by the managed Traefik wrapper"
-  );
-}
 
 /* ── DNS-provider credential metadata ─────────────────────────────────────
  * Only the credential NAMES and a hash live in the database — the VALUES are
@@ -230,7 +217,7 @@ export async function recordManagedSecretsFetch(hash: string): Promise<void> {
 
 export interface ManagedSecretMeta {
   names: string[];
-  /** hashText(serializeSecretsEnv(values)) — matches the wrapper's fetch hash. */
+  /** hashText(serializeSecretsEnv(values)) — compared with the materialised env file. */
   hash: string;
 }
 

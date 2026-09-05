@@ -5,16 +5,11 @@ import { parse } from "yaml";
 import {
   buildStaticConfigObject,
   hashStaticConfig,
-  hostOnly,
-  isAuthorizedWrapperRequest,
   isManagedMode,
-  isPublicDomainRequest,
   panelInternalUrl,
   parseAdminPanelAuthUsers,
-  safeEqualStrings,
   serializeSecretsEnv,
   stringifyStaticConfig,
-  wrapperToken,
 } from "@/lib/managed-traefik";
 import {
   applySecretEdits,
@@ -362,74 +357,6 @@ describe("DNS credentials (write-only secrets)", () => {
     expect(serializeSecretsEnv({ "bad-name": "x", OK: "y" })).toBe(
       "export OK='y'\n"
     );
-  });
-
-  it("hostOnly strips ports (incl. IPv6), trailing dots, and lowercases", () => {
-    expect(hostOnly("Admin.Example.COM:443")).toBe("admin.example.com");
-    expect(hostOnly("traefik-configurator:3000")).toBe("traefik-configurator");
-    expect(hostOnly("[::1]:3000")).toBe("[::1]");
-    expect(hostOnly(null)).toBe("");
-    // Traefik's Host() matcher ignores a trailing dot but forwards it verbatim
-    expect(hostOnly("admin.example.com.")).toBe("admin.example.com");
-    expect(hostOnly("admin.example.com.:443")).toBe("admin.example.com");
-  });
-
-  it("isPublicDomainRequest flags web requests, allows the internal wrapper", () => {
-    const h = (init: Record<string, string>) => new Headers(init);
-    const domain = "admin.example.com";
-    // through Traefik's admin route: Host is the public domain → blocked
-    expect(isPublicDomainRequest(h({ host: "admin.example.com" }), domain)).toBe(true);
-    expect(
-      isPublicDomainRequest(h({ "x-forwarded-host": "admin.example.com:443" }), domain)
-    ).toBe(true);
-    // the wrapper hitting the internal service name → allowed
-    expect(
-      isPublicDomainRequest(h({ host: "traefik-configurator:3000" }), domain)
-    ).toBe(false);
-    // a synthesized X-Forwarded-* without the public host must NOT block
-    expect(
-      isPublicDomainRequest(
-        h({ host: "traefik-configurator:3000", "x-forwarded-for": "10.0.0.1" }),
-        domain
-      )
-    ).toBe(false);
-    // FQDN form reaches the admin router too — must still be flagged
-    expect(isPublicDomainRequest(h({ host: "admin.example.com." }), domain)).toBe(true);
-    expect(isPublicDomainRequest(h({ host: "ADMIN.example.com.:443" }), domain)).toBe(true);
-  });
-
-  it("wrapperToken reads MANAGED_WRAPPER_TOKEN, trimmed, null when blank", () => {
-    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "  tok  ");
-    expect(wrapperToken()).toBe("tok");
-    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "   ");
-    expect(wrapperToken()).toBeNull();
-  });
-
-  it("safeEqualStrings compares in constant time regardless of length", () => {
-    expect(safeEqualStrings("abc", "abc")).toBe(true);
-    expect(safeEqualStrings("abc", "abd")).toBe(false);
-    expect(safeEqualStrings("abc", "abcd")).toBe(false);
-    expect(safeEqualStrings("", "")).toBe(true);
-  });
-
-  it("isAuthorizedWrapperRequest requires the exact bearer token", () => {
-    const h = (init: Record<string, string>) => new Headers(init);
-    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "s3cret-token");
-    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-token" }))).toBe(true);
-    expect(isAuthorizedWrapperRequest(h({ authorization: "bearer s3cret-token" }))).toBe(true);
-    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-toke" }))).toBe(false);
-    expect(isAuthorizedWrapperRequest(h({ authorization: "Bearer s3cret-token-x" }))).toBe(false);
-    expect(isAuthorizedWrapperRequest(h({ authorization: "Basic s3cret-token" }))).toBe(false);
-    expect(isAuthorizedWrapperRequest(h({ authorization: "s3cret-token" }))).toBe(false);
-    expect(isAuthorizedWrapperRequest(h({}))).toBe(false);
-    // the Host heuristic alone must never authorize
-    expect(isAuthorizedWrapperRequest(h({ host: "traefik-configurator:3000" }))).toBe(false);
-  });
-
-  it("isAuthorizedWrapperRequest fails closed when no token is configured", () => {
-    vi.stubEnv("MANAGED_WRAPPER_TOKEN", "");
-    expect(isAuthorizedWrapperRequest(new Headers({ authorization: "Bearer " }))).toBe(false);
-    expect(isAuthorizedWrapperRequest(new Headers({ authorization: "Bearer x" }))).toBe(false);
   });
 
   it("applySecretEdits upserts, removes (remove before upsert), and validates", () => {

@@ -14,7 +14,7 @@ import {
   parseAdminPanelAuthUsers,
   stringifyStaticConfig,
 } from "@/lib/managed-traefik";
-import { probeManagedSecrets } from "@/lib/managed-secrets-store";
+import { probeManagedSecrets, secretsEnvStatus } from "@/lib/managed-secrets-store";
 import {
   validateManagedStaticConfig,
   type ManagedModeResponse,
@@ -34,7 +34,7 @@ async function buildResponse(): Promise<ManagedModeResponse> {
       status: null,
     };
   }
-  const [globalConfig, config, state, secretMeta, secretsProbe] = await Promise.all([
+  const [globalConfig, config, state, secretMeta, secretsProbe, secretsEnv] = await Promise.all([
     getGlobalConfig(),
     getManagedStaticConfig(),
     getManagedStaticState(),
@@ -48,6 +48,7 @@ async function buildResponse(): Promise<ManagedModeResponse> {
       );
       return { undecryptable: false };
     }),
+    secretsEnvStatus(),
   ]);
   const currentHash = hashStaticConfig(
     stringifyStaticConfig(
@@ -57,17 +58,23 @@ async function buildResponse(): Promise<ManagedModeResponse> {
     )
   );
   // Secrets aren't in traefik.yml (they're env vars), but changing them still
-  // needs a Traefik restart — so a secret change must also flip "pending".
-  // The names + hash come from the DB; the values live in the encrypted file.
-  const pending =
-    state.lastFetchedHash !== currentHash ||
-    state.lastFetchedSecretsHash !== secretMeta.hash;
+  // needs a Traefik restart. The panel materialises them into the shared
+  // tmpfs env file; the wrapper polls that file and restarts Traefik within
+  // its poll interval, so "pending" for secrets means the env file on the
+  // mount does not yet match what the store holds (or is missing).
+  const secretsStale = secretsEnv.hash !== secretMeta.hash;
+  const pending = state.lastFetchedHash !== currentHash || secretsStale;
   return {
     managed: true,
     adminAuthConfigured,
     config,
     secretNames: secretMeta.names,
     secretsUndecryptable: secretsProbe.undecryptable,
+    secretsEnv: {
+      materialized: secretsEnv.materialized,
+      writtenAt: secretsEnv.writtenAt,
+      stale: secretsStale,
+    },
     status: {
       currentHash,
       lastFetchedHash: state.lastFetchedHash,

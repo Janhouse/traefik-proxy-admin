@@ -1,6 +1,8 @@
 import "server-only";
 import { serviceScheduler } from "./service-scheduler";
 import { metricsScheduler } from "./metrics-source";
+import { isManagedMode } from "./managed-traefik";
+import { materializeManagedSecrets } from "./managed-secrets-store";
 
 const RETRY_MS = 30_000;
 
@@ -24,6 +26,22 @@ export async function initializeServices(): Promise<void> {
 
       // Start the Traefik metrics scraper (no-op if not configured)
       await metricsScheduler.start();
+
+      // Managed mode: the Traefik wrapper reads DNS credentials from an env
+      // file on a shared tmpfs mount, which is empty after a reboot — rewrite
+      // it from the encrypted store. Failure here must not block the app
+      // (an undecryptable store is reported by the managed status instead).
+      if (isManagedMode()) {
+        try {
+          const st = await materializeManagedSecrets();
+          console.log(`Managed credentials materialised to ${st.path}`);
+        } catch (error) {
+          console.error(
+            "Could not materialise managed credentials for Traefik:",
+            error instanceof Error ? error.message : "unknown error"
+          );
+        }
+      }
 
       isInitialized = true;
       console.log("Application services initialized successfully");

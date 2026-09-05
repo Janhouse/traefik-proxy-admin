@@ -2,12 +2,16 @@
  * failure (surfaced as "undecryptable"), header-bound AAD, key strength,
  * no plaintext downgrade, serialised read-modify-write. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { hashText } from "@/lib/managed-traefik";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  envFilePath,
   isSecretsEncryptionEnabled,
+  materializeManagedSecrets,
+  secretsEnvStatus,
   isSecretsUndecryptableError,
   probeManagedSecrets,
   readManagedSecrets,
@@ -20,19 +24,25 @@ const KEY_ONE = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde
 const KEY_TWO = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
 let dir: string;
+let mountDir: string; // stands in for the tmpfs volume shared with Traefik
 let file: string;
+let envFile: string;
 
 beforeEach(() => {
   // mkdtempSync is fine in tests (the Math.random/Date restriction is workflow-only)
   dir = mkdtempSync(join(tmpdir(), "managed-secrets-"));
+  mountDir = mkdtempSync(join(tmpdir(), "managed-secrets-mount-"));
   file = join(dir, "creds.enc");
+  envFile = join(mountDir, "traefik.env");
   vi.stubEnv("MANAGED_SECRETS_FILE", file);
+  vi.stubEnv("MANAGED_SECRETS_ENV_FILE", envFile);
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
+  rmSync(mountDir, { recursive: true, force: true });
 });
 
 describe("managed-secrets-store", () => {
@@ -179,6 +189,53 @@ describe("managed-secrets-store", () => {
         })
       ).rejects.toThrow("boom");
       expect(await updateManagedSecrets(() => ({ OK: "1" }))).toEqual({ OK: "1" });
+    });
+  });
+
+  describe("materialised env file (shared tmpfs mount)", () => {
+    it("every write also (re)writes the plaintext env file, 0600, sourceable", async () => {
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_ONE);
+      expect(envFilePath()).toBe(envFile);
+      await writeManagedSecrets({ CF_DNS_API_TOKEN: "tok'en", ZZ: "1" });
+      const body = readFileSync(envFile, "utf8");
+      expect(body).toBe("export CF_DNS_API_TOKEN='tok'\\''en'\nexport ZZ='1'\n");
+      expect(statSync(envFile).mode & 0o777).toBe(0o600);
+      // the encrypted store itself never contains the plaintext
+      expect(readFileSync(file, "utf8")).not.toContain("tok'en");
+      const st = await secretsEnvStatus();
+      expect(st.materialized).toBe(true);
+      expect(st.writtenAt).not.toBeNull();
+      expect(st.hash).toBe(hashText(body));
+    });
+
+    it("removing the last credential leaves an empty env file (Traefik restarts without it)", async () => {
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_ONE);
+      await writeManagedSecrets({ A: "1" });
+      await writeManagedSecrets({});
+      expect(readFileSync(envFile, "utf8")).toBe("");
+    });
+
+    it("materializeManagedSecrets rebuilds the env file from the store (after a reboot wipes the tmpfs)", async () => {
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_ONE);
+      await writeManagedSecrets({ A: "1" });
+      rmSync(envFile);
+      expect((await secretsEnvStatus()).materialized).toBe(false);
+      const st = await materializeManagedSecrets();
+      expect(st.materialized).toBe(true);
+      expect(readFileSync(envFile, "utf8")).toBe("export A='1'\n");
+    });
+
+    it("an undecryptable store throws and leaves an existing env file untouched", async () => {
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_ONE);
+      await writeManagedSecrets({ A: "1" });
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_TWO);
+      await expect(materializeManagedSecrets()).rejects.toBeInstanceOf(SecretsUndecryptableError);
+      expect(readFileSync(envFile, "utf8")).toBe("export A='1'\n");
+    });
+
+    it("secretsEnvStatus is non-throwing when the mount is empty", async () => {
+      const st = await secretsEnvStatus();
+      expect(st).toEqual({ path: envFile, materialized: false, writtenAt: null, hash: null });
     });
   });
 });

@@ -9,9 +9,11 @@
 # Security model: only Traefik's :80/:443 are published. The panel (3000)
 # and the Traefik API (8080) stay on the internal network; the panel is
 # reached through Traefik's auto-generated admin route, protected by
-# basicAuth from ADMIN_PANEL_AUTH. The wrapper authenticates to the panel's
-# credential endpoint with MANAGED_WRAPPER_TOKEN (plain HTTP, internal
-# network only).
+# basicAuth from ADMIN_PANEL_AUTH. DNS-provider credentials never cross the
+# network: the panel keeps them encrypted on its volume and materialises a
+# plaintext env file ONLY onto the tmpfs-backed `managed_secrets` volume
+# below, which the Traefik service mounts read-only. That plaintext exists in
+# RAM only and is rewritten by the panel after every reboot.
 name: traefik-managed
 
 services:
@@ -53,10 +55,11 @@ services:
       # so credentials set in the UI can't be read off disk without the key.
       MANAGED_SECRETS_KEY: ${MANAGED_SECRETS_KEY:?set MANAGED_SECRETS_KEY in .env}
       MANAGED_SECRETS_FILE: /data/managed-secrets.enc
-      # Shared secret the Traefik wrapper must present to read credentials.
-      MANAGED_WRAPPER_TOKEN: ${MANAGED_WRAPPER_TOKEN:?set MANAGED_WRAPPER_TOKEN in .env}
+      # Where the decrypted env file for the Traefik wrapper is written (tmpfs).
+      MANAGED_SECRETS_ENV_FILE: /managed-secrets/traefik.env
     volumes:
       - panel_data:/data # encrypted managed-credentials file
+      - managed_secrets:/managed-secrets # tmpfs, shared with traefik (rw here)
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,16 +75,18 @@ services:
     volumes:
       - ./docker/managed/traefik-wrapper.sh:/usr/local/bin/traefik-wrapper.sh:ro
       - traefik_data:/data # acme-<resolver>.json certificate storage + last-good config
-    # The wrapper writes the plaintext credential env to /run — keep it in RAM.
+      - managed_secrets:/managed-secrets:ro # tmpfs, written by the panel
+    # The wrapper keeps its working copy of the credential env in /run — RAM.
     tmpfs:
       - /run
     environment:
       PANEL_URL: http://traefik-configurator:3000
-      MANAGED_WRAPPER_TOKEN: ${MANAGED_WRAPPER_TOKEN:?set MANAGED_WRAPPER_TOKEN in .env}
+      SECRETS_ENV_SRC: /managed-secrets/traefik.env
       # DNS-challenge provider credentials are best set in the admin panel
       # (Config → Managed Traefik → DNS provider credentials): they're stored
-      # write-only and injected here by the wrapper, so they never need to live
-      # in this file. You can still hard-code them as env vars if you prefer:
+      # write-only, handed over through the in-memory mount above and injected
+      # by the wrapper, so they never need to live in this file. You can still
+      # hard-code them as env vars if you prefer:
       # CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
     depends_on:
       traefik-configurator:
@@ -91,3 +96,12 @@ volumes:
   postgres_data:
   traefik_data:
   panel_data:
+  # In-memory hand-over of decrypted DNS credentials from the panel (uid 1001)
+  # to the Traefik wrapper. tmpfs: nothing is ever written to disk, and it is
+  # empty after every reboot until the panel rewrites it on startup.
+  managed_secrets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1m,uid=1001,gid=1001,mode=0700"

@@ -1,40 +1,40 @@
 #!/bin/sh
-# Managed-Traefik wrapper: fetches Traefik's STATIC config (traefik.yml) and
-# its DNS-provider credentials from the admin panel, and restarts Traefik
-# whenever either changes — static config and env vars can't be hot-reloaded.
-# Runs as the container entrypoint of the official traefik image (busybox sh
-# + wget are available). POSIX sh only.
+# Managed-Traefik wrapper: fetches Traefik's STATIC config (traefik.yml) from
+# the admin panel over HTTP, reads the DNS-provider credential env file the
+# panel materialises onto a SHARED TMPFS MOUNT (no network endpoint — the
+# plaintext never leaves RAM), and restarts Traefik whenever either changes —
+# static config and env vars can't be hot-reloaded. Runs as the container
+# entrypoint of the official traefik image (busybox sh + wget). POSIX sh only.
 #
 # Rollback: a config Traefik has run for GRACE_SECONDS is snapshotted as
-# "last-good" (config + matching credential env). If Traefik dies before a
-# freshly fetched config reaches that grace period, the last-good pair is
-# restored and Traefik restarted from it; the rejected pair is remembered so
-# the poll loop doesn't re-apply it until the panel serves something new.
+# "last-good" (config ONLY — credentials are never copied to persistent
+# storage). If Traefik dies before a freshly fetched config reaches that grace
+# period, last-good is restored and Traefik restarted from it; the rejected
+# config is remembered so the poll loop doesn't re-apply it until the panel
+# serves something new. Credentials can't crash Traefik (a bad token only
+# fails ACME), so they always follow the mount.
 set -u
 
 PANEL_URL="${PANEL_URL:-http://traefik-configurator:3000}"
 CONFIG_FILE="${CONFIG_FILE:-/etc/traefik/traefik.yml}"
+# The panel writes this onto a tmpfs volume mounted read-only here.
+SECRETS_ENV_SRC="${SECRETS_ENV_SRC:-/managed-secrets/traefik.env}"
+# Working copy (what the running Traefik was started with); /run is a tmpfs.
 ENV_FILE="${ENV_FILE:-/run/traefik-secrets.env}"
-# last-good lives on the persistent /data volume so it survives container
-# recreation (it holds credentials — created 0600 via umask below).
+# last-good config lives on the persistent /data volume so it survives
+# container recreation. It never holds credentials.
 LAST_GOOD_DIR="${LAST_GOOD_DIR:-/data/wrapper}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-120}"
 GRACE_SECONDS="${GRACE_SECONDS:-20}"
-# Shared secret the panel requires on the credential endpoint (compose passes
-# the same MANAGED_WRAPPER_TOKEN to both services).
-MANAGED_WRAPPER_TOKEN="${MANAGED_WRAPPER_TOKEN:-}"
 
 STATIC_URL="$PANEL_URL/api/traefik/static-config"
-SECRETS_URL="$PANEL_URL/api/traefik/managed/secrets-env"
 TMP_FILE="$CONFIG_FILE.next"
 TMP_ENV="$ENV_FILE.next"
 LAST_GOOD_CONFIG="$LAST_GOOD_DIR/traefik.yml.last-good"
-LAST_GOOD_ENV="$LAST_GOOD_DIR/traefik-secrets.env.last-good"
 REJECTED_CONFIG="$CONFIG_FILE.rejected"
-REJECTED_ENV="$ENV_FILE.rejected"
 
-# Credentials land in $ENV_FILE / last-good — keep them owner-only.
+# The working credential copy in /run is owner-only.
 umask 077
 
 CHILD=""
@@ -42,7 +42,7 @@ started_at=0
 # 1 while the running config/env came from the panel and hasn't survived the
 # grace period yet (rollback candidate; snapshot once it has).
 unproven=0
-token_warned=0
+mount_warned=0
 rejected_logged=0
 
 log() { echo "[traefik-wrapper] $1"; }
@@ -53,19 +53,19 @@ fetch_config() {
     wget -q -T 5 -O "$TMP_FILE" "$STATIC_URL" 2>/dev/null && [ -s "$TMP_FILE" ]
 }
 
-# Credentials may legitimately be empty (no DNS resolvers), so success here is
-# a clean HTTP fetch — not a non-empty file. Without the token the panel
-# answers 401 and we keep whatever env we had.
-fetch_secrets() {
-    if [ -z "$MANAGED_WRAPPER_TOKEN" ]; then
-        if [ "$token_warned" -eq 0 ]; then
-            warn "MANAGED_WRAPPER_TOKEN is not set — DNS credentials cannot be fetched from the panel"
-            token_warned=1
+# Copy the panel's materialised env file into $TMP_ENV. The file may
+# legitimately be empty (no DNS resolvers). It is absent until the panel has
+# started once after a (re)boot — then we keep whatever env we had.
+read_secrets() {
+    if [ ! -f "$SECRETS_ENV_SRC" ]; then
+        if [ "$mount_warned" -eq 0 ]; then
+            log "no credential file at $SECRETS_ENV_SRC yet (the panel writes it on startup)"
+            mount_warned=1
         fi
         return 1
     fi
-    wget -q -T 5 --header "Authorization: Bearer $MANAGED_WRAPPER_TOKEN" \
-        -O "$TMP_ENV" "$SECRETS_URL" 2>/dev/null
+    mount_warned=0
+    cp "$SECRETS_ENV_SRC" "$TMP_ENV" 2>/dev/null
 }
 
 # Minimal config so Traefik still serves (and keeps polling the panel's
@@ -93,39 +93,31 @@ EOF
 
 have_last_good() { [ -s "$LAST_GOOD_CONFIG" ]; }
 
-# Both files copied together: a config and the credentials it was proven with.
+# Config only — never credentials — goes to persistent storage.
 snapshot_last_good() {
     mkdir -p "$LAST_GOOD_DIR" || return 1
     cp "$CONFIG_FILE" "$LAST_GOOD_CONFIG.tmp" || return 1
     mv "$LAST_GOOD_CONFIG.tmp" "$LAST_GOOD_CONFIG" || return 1
-    cp "$ENV_FILE" "$LAST_GOOD_ENV.tmp" || return 1
-    mv "$LAST_GOOD_ENV.tmp" "$LAST_GOOD_ENV" || return 1
     log "config proven for ${GRACE_SECONDS}s — saved as last-good"
 }
 
 restore_last_good() {
-    cp "$LAST_GOOD_CONFIG" "$CONFIG_FILE" || return 1
-    if [ -f "$LAST_GOOD_ENV" ]; then
-        cp "$LAST_GOOD_ENV" "$ENV_FILE"
-    else
-        : > "$ENV_FILE"
-    fi
+    cp "$LAST_GOOD_CONFIG" "$CONFIG_FILE"
 }
 
-# Remember the pair that just killed Traefik so the poll loop skips it.
+# Remember the config that just killed Traefik so the poll loop skips it.
 remember_rejected() {
     cp "$CONFIG_FILE" "$REJECTED_CONFIG" 2>/dev/null
-    cp "$ENV_FILE" "$REJECTED_ENV" 2>/dev/null
 }
 
-# True when the candidate pair ($1 config, $2 env) equals the rejected pair.
-is_rejected_pair() {
+# True when the candidate config ($1) equals the rejected one.
+is_rejected_config() {
     [ -f "$REJECTED_CONFIG" ] || return 1
-    cmp -s "$1" "$REJECTED_CONFIG" && cmp -s "$2" "$REJECTED_ENV"
+    cmp -s "$1" "$REJECTED_CONFIG"
 }
 
 mkdir -p "$(dirname "$CONFIG_FILE")" "$(dirname "$ENV_FILE")"
-# Start from a known-empty env file so the first secrets fetch only restarts
+# Start from a known-empty env file so the first credential read only restarts
 # Traefik when credentials actually exist.
 : > "$ENV_FILE"
 
@@ -149,10 +141,9 @@ if [ -s "$TMP_FILE" ]; then
     log "fetched static config from the panel"
     unproven=1
 fi
-if fetch_secrets; then
+if read_secrets; then
     mv "$TMP_ENV" "$ENV_FILE"
-    log "fetched DNS credentials from the panel"
-    unproven=1
+    log "loaded DNS credentials from $SECRETS_ENV_SRC"
 else
     rm -f "$TMP_ENV"
 fi
@@ -193,7 +184,7 @@ handle_child_exit() {
     code=$?
     CHILD=""
     if [ "$unproven" -eq 1 ] && have_last_good; then
-        warn "traefik exited (code $code) within ${GRACE_SECONDS}s of applying a NEW config — the panel's current static config/credentials are being REJECTED"
+        warn "traefik exited (code $code) within ${GRACE_SECONDS}s of applying a NEW static config — the panel's current config is being REJECTED"
         warn "rolling back to the last-good config; fix the config in the panel to try again"
         remember_rejected
         if restore_last_good; then
@@ -209,8 +200,9 @@ handle_child_exit() {
 
 start_traefik
 
-# ── poll loop: restart on static-config OR credential change; snapshot the
-#    config once it has run for the grace period; roll back if it dies ──────
+# ── poll loop: restart on static-config OR credential change (the panel
+#    rewrites the env file on the shared mount); snapshot the config once it
+#    has run for the grace period; roll back if it dies ─────────────────────
 while true; do
     slept=0
     while [ "$slept" -lt "$POLL_SECONDS" ]; do
@@ -222,7 +214,7 @@ while true; do
         fi
         if [ "$unproven" -eq 1 ] && [ $(($(now) - started_at)) -ge "$GRACE_SECONDS" ]; then
             if snapshot_last_good; then
-                rm -f "$REJECTED_CONFIG" "$REJECTED_ENV"
+                rm -f "$REJECTED_CONFIG"
             else
                 warn "could not save last-good config under $LAST_GOOD_DIR"
             fi
@@ -230,40 +222,53 @@ while true; do
         fi
     done
 
-    # Fetch both; anything that fails to fetch keeps its current file.
+    # Fetch/read both; anything unavailable keeps its current file.
     if ! fetch_config; then
         rm -f "$TMP_FILE"
         cp "$CONFIG_FILE" "$TMP_FILE"
     fi
-    if ! fetch_secrets; then
+    if ! read_secrets; then
         rm -f "$TMP_ENV"
         cp "$ENV_FILE" "$TMP_ENV"
     fi
 
-    if cmp -s "$TMP_FILE" "$CONFIG_FILE" && cmp -s "$TMP_ENV" "$ENV_FILE"; then
-        rm -f "$TMP_FILE" "$TMP_ENV"
-        continue
-    fi
-    if is_rejected_pair "$TMP_FILE" "$TMP_ENV"; then
+    config_changed=0
+    env_changed=0
+    cmp -s "$TMP_FILE" "$CONFIG_FILE" || config_changed=1
+    cmp -s "$TMP_ENV" "$ENV_FILE" || env_changed=1
+
+    if [ "$config_changed" -eq 1 ] && is_rejected_config "$TMP_FILE"; then
         # Same config that already crashed Traefik — stay on last-good.
-        rm -f "$TMP_FILE" "$TMP_ENV"
+        rm -f "$TMP_FILE"
+        config_changed=0
         if [ "$rejected_logged" -eq 0 ]; then
             warn "panel still serves the rejected config — staying on last-good until it changes"
             rejected_logged=1
         fi
+    else
+        rejected_logged=0
+    fi
+
+    if [ "$config_changed" -eq 0 ] && [ "$env_changed" -eq 0 ]; then
+        rm -f "$TMP_FILE" "$TMP_ENV"
         continue
     fi
-    rejected_logged=0
 
-    if ! cmp -s "$TMP_FILE" "$CONFIG_FILE"; then log "static config changed"; fi
-    if ! cmp -s "$TMP_ENV" "$ENV_FILE"; then log "DNS credentials changed"; fi
-    mv "$TMP_FILE" "$CONFIG_FILE"
-    mv "$TMP_ENV" "$ENV_FILE"
+    if [ "$config_changed" -eq 1 ]; then
+        log "static config changed"
+        mv "$TMP_FILE" "$CONFIG_FILE"
+        # Only a NEW static config is a rollback candidate.
+        unproven=1
+    fi
+    if [ "$env_changed" -eq 1 ]; then
+        log "DNS credentials changed"
+        mv "$TMP_ENV" "$ENV_FILE"
+    fi
+    rm -f "$TMP_FILE" "$TMP_ENV"
 
     log "restarting traefik to apply changes"
     kill "$CHILD" 2>/dev/null
     wait "$CHILD" 2>/dev/null
     CHILD=""
-    unproven=1
     start_traefik
 done
