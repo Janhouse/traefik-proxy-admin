@@ -219,15 +219,28 @@ describe("validateManagedStaticConfig", () => {
   it("requires at least one TLS-enabled entrypoint (the admin panel is TLS-only)", () => {
     reject(
       { ...valid, entrypoints: [{ name: "web", port: 80 }], certResolvers: [] },
-      /No entrypoint has TLS enabled/
+      /TLS-enabled entrypoint on port 443/
     );
     // even with no resolvers a TLS entrypoint is required: the admin panel
-    // router is published only on TLS entrypoints, so a config without one
-    // would leave it with nothing to bind — an unrecoverable lockout.
+    // router requires HTTPS, and the bundle must retain a published listener.
     reject(
       { entrypoints: [{ name: "web", port: 80 }], certResolvers: [] },
-      /No entrypoint has TLS enabled/
+      /TLS-enabled entrypoint on port 443/
     );
+  });
+
+  it("preserves the published admin listener while allowing renamed and extra listeners", () => {
+    const https = { name: "https", port: 443, tls: { enabled: true } };
+    expect(validateManagedStaticConfig({ entrypoints: [https], certResolvers: [] }).ok).toBe(true);
+    reject({ entrypoints: [{ ...https, port: 8443 }], certResolvers: [] }, /port 443/);
+    reject({ entrypoints: [{ ...https, name: "traefik" }], certResolvers: [] }, /reserved internal/);
+    reject({ entrypoints: [
+      { ...https, redirectToEntrypoint: "other" },
+      { name: "other", port: 8443, tls: { enabled: true } },
+    ], certResolvers: [] }, /without a redirect/);
+    expect(validateManagedStaticConfig({ entrypoints: [https,
+      { name: "other", port: 8443, tls: { enabled: true } },
+    ], certResolvers: [] }).ok).toBe(true);
   });
 
   it("type-checks fields instead of coercing (undefined name is not 'undefined')", () => {

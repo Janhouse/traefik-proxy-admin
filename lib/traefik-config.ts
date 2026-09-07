@@ -843,7 +843,7 @@ function createCertificateConfigTriggers(
 
 /**
  * Managed mode only: expose the admin panel itself through Traefik. The
- * router binds the TLS-enabled managed entrypoints and carries a basicAuth
+ * HTTPS-only router follows the running default entrypoints and carries a basicAuth
  * middleware built from ADMIN_PANEL_AUTH (htpasswd entries) — the bundle
  * publishes no panel port, so this route is the only way in. Forward-auth is
  * unaffected: Traefik calls the verify endpoint directly at the internal
@@ -895,25 +895,15 @@ function createAdminPanelRoute(
     tls.domains = [{ main: matched.domain, sans: [`*.${matched.domain}`] }];
   }
 
-  const tlsEps = managedCfg.entrypoints
-    .filter((e) => e.tls?.enabled)
-    .map((e) => e.name);
-  if (tlsEps.length === 0) {
-    // validateManagedStaticConfig rejects this, but a config stored by an
-    // older build could still reach here — fall back to "websecure" and warn,
-    // since a wrong entrypoint name silently drops the only ingress.
-    console.warn(
-      'Managed mode: no TLS-enabled entrypoint in the static config — the admin ' +
-        'panel router is falling back to "websecure", which may not exist. Enable ' +
-        "TLS on an entrypoint (usually :443)."
-    );
-  }
-
   config.http.routers["admin-panel"] = {
     rule: `Host(\`${host}\`)`,
     service: "admin-panel",
     ...(middlewares.length > 0 && { middlewares }),
-    entryPoints: tlsEps.length > 0 ? tlsEps : ["websecure"],
+    // Omit entryPoints so Traefik attaches this router to its actual default
+    // listeners, including after rollback or first-boot fallback. DB names
+    // may belong to a rejected config. The internal "traefik" listener is
+    // excluded by Traefik; explicit tls below keeps the panel HTTPS-only.
+    // Managed static configs intentionally do not set asDefault.
     // Outrank any user service that claims the admin host with a longer rule:
     // the panel is the bundle's only ingress, so it must never be shadowed by
     // a user router (which would be another lockout with no port to fall on).

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -58,6 +60,11 @@ function StatusChip({
   rejected: boolean;
   lastFetchedAt: string | null;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(timer);
+  }, []);
   if (!lastFetchedAt) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] px-2.5 py-1 text-[12px] text-[var(--meta)]">
@@ -66,11 +73,19 @@ function StatusChip({
       </span>
     );
   }
+  if (!Number.isFinite(Date.parse(lastFetchedAt)) || now - Date.parse(lastFetchedAt) > 90_000) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] px-2.5 py-1 text-[12px] text-[var(--meta)]">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        Traefik heartbeat is stale — running configuration is unconfirmed
+      </span>
+    );
+  }
   if (rejected) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--danger)_40%,transparent)] bg-[var(--danger)]/10 px-2.5 py-1 text-[12px] text-[var(--danger)]">
         <AlertTriangle className="h-3.5 w-3.5" />
-        Traefik rejected this config and rolled back — fix it and save again
+        Traefik rejected this config and rolled back — fix it and save again, or wait for an automatic retry (normally within 5 minutes)
       </span>
     );
   }
@@ -85,7 +100,7 @@ function StatusChip({
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--ok,green)_40%,transparent)] bg-[var(--ok-soft,rgba(0,128,0,.12))] px-2.5 py-1 text-[12px]">
       <CheckCircle2 className="h-3.5 w-3.5" />
-      Applied — Traefik fetched this config at{" "}
+      Applied — config proven; Traefik last reported at{" "}
       {new Date(lastFetchedAt).toLocaleTimeString()}
     </span>
   );

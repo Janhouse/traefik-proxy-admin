@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_GROUP_CHILDREN,
   assembleRule,
   assembleRuleFromTree,
   countMatchers,
@@ -464,5 +465,25 @@ describe("tree operations", () => {
   it("countMatchers counts leaves at every depth", () => {
     expect(countMatchers(tree)).toBe(4);
     expect(countMatchers([])).toBe(0);
+  });
+});
+
+
+describe("match rule breadth limits", () => {
+  const children = Array.from({ length: MAX_GROUP_CHILDREN }, () => m("PathPrefix", "AND", "/"));
+  const oversized = [...children, m("ClientIP", "AND", "192.0.2.0/24")];
+
+  it("rejects oversized groups and top-level arrays before storage", () => {
+    for (const nodes of [oversized, [g("AND", ...oversized)], [g("OR", g("AND", ...oversized))]]) {
+      expect(validateMatchRulesPayload(nodes)).toContain(`at most ${MAX_GROUP_CHILDREN}`);
+    }
+    expect(validateMatchRulesPayload(children)).toBeNull();
+    expect(validateMatchRulesPayload([g("AND", ...children)])).toBeNull();
+  });
+
+  it("preserves restrictions in previously stored oversized groups", () => {
+    const parsed = parseMatchRules(JSON.stringify([g("AND", ...oversized)]));
+    expect(countMatchers(parsed)).toBe(MAX_GROUP_CHILDREN + 1);
+    expect(assembleRule("app.example.com", parsed)).toContain("ClientIP(`192.0.2.0/24`)");
   });
 });

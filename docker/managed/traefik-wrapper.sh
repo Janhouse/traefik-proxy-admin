@@ -11,8 +11,8 @@
 # storage). If Traefik dies before a freshly fetched config reaches that grace
 # period, last-good is restored and Traefik restarted from it; the rejected
 # config is remembered so the poll loop doesn't re-apply it until the panel
-# serves something new. Credentials can't crash Traefik (a bad token only
-# fails ACME), so they always follow the mount.
+# serves something new or the retry cooldown expires. Credentials can't crash
+# Traefik (a bad token only fails ACME), so they always follow the mount.
 set -u
 
 PANEL_URL="${PANEL_URL:-http://traefik-configurator:3000}"
@@ -27,6 +27,7 @@ LAST_GOOD_DIR="${LAST_GOOD_DIR:-/data/wrapper}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-120}"
 GRACE_SECONDS="${GRACE_SECONDS:-20}"
+RETRY_SECONDS="${RETRY_SECONDS:-300}"
 
 STATIC_URL="$PANEL_URL/api/traefik/static-config"
 TMP_FILE="$CONFIG_FILE.next"
@@ -44,6 +45,7 @@ started_at=0
 unproven=0
 mount_warned=0
 rejected_logged=0
+rejected_at=0
 # Hash of the config Traefik has PROVEN (survived the grace period). Reported
 # back to the panel so its status reflects what Traefik actually runs, not just
 # what it last fetched. Empty until something has been proven.
@@ -138,11 +140,18 @@ restore_last_good() {
 # Remember the config that just killed Traefik so the poll loop skips it.
 remember_rejected() {
     cp "$CONFIG_FILE" "$REJECTED_CONFIG" 2>/dev/null
+    rejected_at=$(now)
 }
 
 # True when the candidate config ($1) equals the rejected one.
 is_rejected_config() {
     [ -f "$REJECTED_CONFIG" ] || return 1
+    if [ $(($(now) - rejected_at)) -ge "$RETRY_SECONDS" ]; then
+        log "rejected config cooldown elapsed — allowing another startup attempt"
+        rm -f "$REJECTED_CONFIG"
+        rejected_logged=0
+        return 1
+    fi
     cmp -s "$1" "$REJECTED_CONFIG"
 }
 
@@ -164,6 +173,12 @@ mkdir -p "$(dirname "$CONFIG_FILE")" "$(dirname "$ENV_FILE")"
 # Traefik when credentials actually exist.
 : > "$ENV_FILE"
 
+# Seed the first heartbeat from disk when the working config is already proven.
+# A normal container restart should not erase the panel's applied status.
+if have_last_good && cmp -s "$CONFIG_FILE" "$LAST_GOOD_CONFIG"; then
+    applied_hash=$(sha256_of "$CONFIG_FILE") || applied_hash=""
+fi
+
 # ── first boot: wait for the panel; fall back to last-good, then minimal ───
 waited=0
 until fetch_config; do
@@ -183,7 +198,12 @@ done
 if [ -s "$TMP_FILE" ]; then
     mv "$TMP_FILE" "$CONFIG_FILE"
     log "fetched static config from the panel"
-    unproven=1
+    if have_last_good && cmp -s "$CONFIG_FILE" "$LAST_GOOD_CONFIG"; then
+        applied_hash=$(sha256_of "$CONFIG_FILE") || applied_hash=""
+    else
+        applied_hash=""
+        unproven=1
+    fi
 fi
 if read_secrets; then
     mv "$TMP_ENV" "$ENV_FILE"
@@ -215,7 +235,8 @@ start_traefik() {
 # back to last-good if we have one, otherwise start the minimal fallback so the
 # panel stays reachable and the config can be fixed — never leave the bundle in
 # a crash-loop with no ingress. Either way the rejected config is remembered so
-# the poll loop won't re-apply it until the panel serves something new.
+# the poll loop won't re-apply it until the panel serves something new or the
+# retry cooldown expires.
 handle_child_exit() {
     wait "$CHILD"
     code=$?
@@ -288,7 +309,7 @@ while true; do
         rm -f "$TMP_FILE"
         config_changed=0
         if [ "$rejected_logged" -eq 0 ]; then
-            warn "panel still serves the rejected config — staying on last-good until it changes"
+            warn "panel still serves the rejected config — staying on recovery config until it changes or the retry cooldown expires"
             rejected_logged=1
         fi
     else

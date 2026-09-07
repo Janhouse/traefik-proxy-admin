@@ -2,7 +2,7 @@
 /* Managed-Traefik section: hidden outside managed mode, applied/pending
  * status chips, row edits flowing into the PUT body via its own Save. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   ManagedModeResponse,
@@ -54,7 +54,7 @@ function managedResponse(over: Partial<ManagedModeResponse> = {}): ManagedModeRe
     status: {
       currentHash: "h1",
       lastAppliedHash: "h1",
-      lastFetchedAt: "2026-06-13T00:00:00.000Z",
+      lastFetchedAt: new Date().toISOString(),
       pending: false,
       rejected: false,
     },
@@ -92,7 +92,24 @@ describe("ManagedStaticSection", () => {
   it("shows the applied chip when Traefik runs the current config", async () => {
     stubFetch(managedResponse());
     render(<ManagedStaticSection />);
-    expect(await screen.findByText(/Applied — Traefik fetched/)).toBeDefined();
+    expect(await screen.findByText(/Applied — config proven/)).toBeDefined();
+  });
+
+  it("expires the applied heartbeat even when subsequent panel polls fail", async () => {
+    vi.useFakeTimers();
+    try {
+      stubFetch(managedResponse());
+      render(<ManagedStaticSection />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText(/Applied — config proven/)).toBeDefined();
+      fetchMock.mockRejectedValue(new Error("offline"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(100_000); });
+      expect(screen.getByText(/Traefik heartbeat is stale/)).toBeDefined();
+      expect(screen.queryByText(/Applied — config proven/)).toBeNull();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 
   it("shows the pending chip while Traefik runs an older config", async () => {
@@ -101,7 +118,7 @@ describe("ManagedStaticSection", () => {
         status: {
           currentHash: "h2",
           lastAppliedHash: "h1",
-          lastFetchedAt: "2026-06-13T00:00:00.000Z",
+          lastFetchedAt: new Date().toISOString(),
           pending: true,
           rejected: false,
         },
@@ -117,7 +134,7 @@ describe("ManagedStaticSection", () => {
         status: {
           currentHash: "h2",
           lastAppliedHash: "h1",
-          lastFetchedAt: "2026-06-13T00:00:00.000Z",
+          lastFetchedAt: new Date().toISOString(),
           pending: true,
           rejected: true,
         },

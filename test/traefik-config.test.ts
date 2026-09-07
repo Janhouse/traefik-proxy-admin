@@ -573,7 +573,7 @@ describe("generateTraefikConfig — managed mode integration", () => {
     const config = await generateTraefikConfig();
     const router = config.http.routers["admin-panel"];
     expect(router.rule).toBe("Host(`admin.example.com`)");
-    expect(router.entryPoints).toEqual(["websecure"]);
+    expect(router.entryPoints).toBeUndefined();
     expect(router.middlewares).toEqual(["admin-panel-auth"]);
     // suffix-matched managed domain supplies resolver + wildcard block
     expect(router.tls).toEqual({
@@ -586,6 +586,24 @@ describe("generateTraefikConfig — managed mode integration", () => {
     expect(config.http.services["admin-panel"].loadBalancer.servers[0].url).toBe(
       "http://admin.example.com"
     );
+  });
+
+  it("keeps the admin route independent of rejected entrypoint names", async () => {
+    vi.stubEnv("TRAEFIK_MANAGED", "true");
+    vi.stubEnv("ADMIN_PANEL_AUTH", "admin:$apr1$hash");
+    h.state.globalConfig.adminPanelDomain = "admin.example.com";
+    const original = h.state.managedConfig;
+    h.state.managedConfig = {
+      entrypoints: [{ name: "renamed-https", port: 443, tls: { enabled: true } }],
+      certResolvers: [],
+    };
+    const config = await generateTraefikConfig();
+    const router = config.http.routers["admin-panel"];
+    h.state.managedConfig = original;
+    // Both last-good (old names) and the built-in fallback can attach it.
+    expect(router.entryPoints).toBeUndefined();
+    expect(router.tls).toEqual({});
+    expect(router.middlewares).toEqual(["admin-panel-auth"]);
   });
 
   it("managed mode without valid ADMIN_PANEL_AUTH refuses to publish the admin route", async () => {

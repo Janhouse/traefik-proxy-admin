@@ -372,13 +372,13 @@ export function validateManagedStaticConfig(
 
   validateEntrypoints(entrypoints, new Set(certResolvers.map((r) => r.name)), errors);
   validateResolvers(certResolvers, new Set(entrypoints.map((e) => e.name)), errors);
-  if (!entrypoints.some((e) => e.tls?.enabled)) {
-    // The admin panel router is published ONLY on TLS-enabled entrypoints (see
-    // createAdminPanelRoute). A config with none would leave that router with
-    // no entrypoint to bind — Traefik starts fine but the panel, the bundle's
-    // only ingress, becomes unreachable. Refuse it here; there's no recovery.
+  // The supplied compose publishes container ports 80/443 only. Survival of
+  // Traefik's startup grace period cannot prove that the panel is reachable.
+  if (!entrypoints.some((e) =>
+    e.port === 443 && e.name !== "traefik" && e.tls?.enabled && !e.redirectToEntrypoint
+  )) {
     errors.push(
-      "No entrypoint has TLS enabled. The admin panel is published only on TLS entrypoints, so a config without one would make the panel unreachable — enable TLS on an entrypoint (usually :443)."
+      "The managed bundle requires a TLS-enabled entrypoint on port 443 without a redirect to keep the admin panel reachable. Its name must not be the reserved internal entrypoint 'traefik'."
     );
   }
 

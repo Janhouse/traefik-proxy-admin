@@ -79,12 +79,26 @@ How it works:
   (the config only — credentials are never written to persistent storage). If Traefik exits before a newly
   applied config reaches that grace period, the wrapper logs a loud warning,
   restores last-good and restarts from it — and keeps ignoring that rejected
-  config until the panel serves a different one. Last-good is also used at
+  config until the panel serves a different one or a five-minute cooldown
+  expires (`RETRY_SECONDS` on the wrapper), allowing transient startup failures
+  to recover automatically. Last-good is also used at
   boot when the panel is unreachable (before falling back to a minimal
   built-in config). Saves are validated server-side (types, known fields
   only, ACME email format, known lego DNS provider codes with a custom
-  escape hatch, a TLS-capable entrypoint whenever a resolver exists), so
+  escape hatch, a TLS-enabled listener on container port 443 with no redirect), so
   the rollback is the safety net, not the first line of defense.
+- **Admin access**: container port 443 must remain a TLS listener because the
+  supplied compose publishes only 80/443. Extra listeners are allowed, but
+  moving the only TLS listener to 8443 is rejected. Plain HTTP-only managed
+  configurations are unsupported, including behind an upstream TLS terminator.
+  The admin router remains HTTPS-only and authenticated on Traefik's default
+  listeners, following the running configuration even after entrypoint renames
+  and rollback. Its high priority reserves the entire admin hostname: user
+  services must use another hostname, including services with path rules.
+  The minimal recovery config has no certificate resolver, so recovery HTTPS
+  uses Traefik's default self-signed certificate and shows a browser warning.
+  The config page flags a missing heartbeat after 90 seconds (three default
+  wrapper polls); adjust this threshold if you customise the polling interval.
 - Entrypoints and certificate resolvers are edited in the **Managed Traefik**
   section on the config page. DNS-challenge resolvers also need their provider
   credentials (e.g. `CF_DNS_API_TOKEN` for Cloudflare); set them right there
