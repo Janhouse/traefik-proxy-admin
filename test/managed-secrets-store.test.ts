@@ -36,6 +36,8 @@ beforeEach(() => {
   envFile = join(mountDir, "traefik.env");
   vi.stubEnv("MANAGED_SECRETS_FILE", file);
   vi.stubEnv("MANAGED_SECRETS_ENV_FILE", envFile);
+  // The env file is only materialised in managed mode; most tests exercise it.
+  vi.stubEnv("TRAEFIK_MANAGED", "true");
 });
 
 afterEach(() => {
@@ -206,6 +208,16 @@ describe("managed-secrets-store", () => {
       expect(st.materialized).toBe(true);
       expect(st.writtenAt).not.toBeNull();
       expect(st.hash).toBe(hashText(body));
+    });
+
+    it("does NOT materialise the env file outside managed mode", async () => {
+      vi.stubEnv("TRAEFIK_MANAGED", "");
+      vi.stubEnv("MANAGED_SECRETS_KEY", KEY_ONE);
+      await writeManagedSecrets({ CF_DNS_API_TOKEN: "x" });
+      // store still written; the env file (on a mount that only exists in the
+      // bundle) is left alone rather than attempted at the filesystem root
+      expect(readFileSync(file, "utf8")).not.toBe("");
+      expect((await secretsEnvStatus()).materialized).toBe(false);
     });
 
     it("removing the last credential leaves an empty env file (Traefik restarts without it)", async () => {

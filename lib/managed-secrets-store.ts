@@ -6,7 +6,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
-import { hashText, serializeSecretsEnv } from "@/lib/managed-traefik";
+import { hashText, isManagedMode, serializeSecretsEnv } from "@/lib/managed-traefik";
 import { dirname, join } from "node:path";
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -14,8 +14,9 @@ import { dirname, join } from "node:path";
  * application database. The database only records the credential names (see
  * getManagedSecretMeta in app-config). The file is AES-256-GCM encrypted with
  * a key derived from MANAGED_SECRETS_KEY, so it can't be read at rest without
- * the key. The only reader is the in-network wrapper, via the one-way
- * /api/traefik/managed/secrets-env endpoint.
+ * the key. There is NO HTTP endpoint for the values: the panel decrypts them
+ * in-process and materialises them into a shell-sourceable env file on a tmpfs
+ * mount shared read-only with the Traefik container (see below).
  *
  * File format (v2): {"v":2,"alg":"aes-256-gcm","iv","tag","data"} where the
  * envelope header {v, alg} is bound as GCM additional authenticated data, so
@@ -309,6 +310,11 @@ async function writeUnlocked(values: Record<string, string>): Promise<void> {
     env = { v: FORMAT_VERSION, alg: "plain", data: json };
   }
   await writeFileAtomic(filePath(), JSON.stringify(env));
+  // The env file is consumed only by the bundled wrapper, i.e. managed mode.
+  // Outside it there is no shared mount, so materialising would just try to
+  // mkdir the default path at the filesystem root and fail on every write —
+  // skip it. The store itself still works everywhere.
+  if (!isManagedMode()) return;
   // The store is the source of truth; the env file is derived from it. A
   // failed materialisation is logged and surfaced via secretsEnvStatus()
   // (the managed status shows it as stale) rather than failing the save.
