@@ -573,6 +573,36 @@ describe("RouteRuleEditor conflicts", () => {
     expect(onBlockedChange).not.toHaveBeenCalledWith(true);
   });
 
+  it("a blocking router later in the list is not masked by an earlier non-blocking overlap", () => {
+    mockState.conflicts = conflictsOf([
+      {
+        // non-blocking overlap FIRST (extra matchers) — must not win
+        routerName: "grafana-api@file",
+        hosts: ["app.example.com"],
+        hostOnly: false,
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+      {
+        // genuine host-only block LATER — must still block the save
+        routerName: "grafana@file",
+        hosts: ["app.example.com"],
+        hostOnly: true,
+        entryPoints: ["websecure"],
+        provider: "file",
+        managedServiceId: null,
+      },
+    ]);
+
+    const { onBlockedChange } = renderEditor([]);
+    expect(
+      screen.getByText(/conflicts with a router outside this tool/i)
+    ).toBeDefined();
+    expect(screen.getByText(/saving is blocked/i)).toBeDefined();
+    expect(onBlockedChange.mock.calls.at(-1)?.[0]).toBe(true);
+  });
+
   it("a foreign router WITHOUT the hostOnly flag is treated as an overlap (non-blocking)", () => {
     mockState.conflicts = conflictsOf([
       {

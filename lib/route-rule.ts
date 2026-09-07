@@ -58,6 +58,10 @@ export const MAX_GROUP_DEPTH = 4;
 /** How deep the EDITOR lets users nest groups (groups inside groups = 2). */
 export const UI_MAX_GROUP_DEPTH = 2;
 
+/** Cap children per group so a stored tree can't be arbitrarily wide (depth is
+ * already bounded; this bounds breadth). Far above any real UI-built rule. */
+export const MAX_GROUP_CHILDREN = 64;
+
 export interface MatcherTypeDef {
   key: MatchType;
   label: string;
@@ -339,6 +343,7 @@ function parseNode(raw: unknown, depth: number): RuleNode | null {
       kind: "group",
       conn: o.conn === "OR" ? "OR" : "AND",
       children: o.children
+        .slice(0, MAX_GROUP_CHILDREN)
         .map((c) => parseNode(c, depth + 1))
         .filter((c): c is RuleNode => c !== null),
     };

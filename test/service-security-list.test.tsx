@@ -2,7 +2,7 @@
 /* ServiceSecurityList type switches: the persisted rule must survive until
  * its replacement has been CREATED — never delete-then-create. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/components/toaster", () => ({ toast: vi.fn() }));
@@ -127,5 +127,31 @@ describe("ServiceSecurityList type switch", () => {
     await screen.findByText(/Failed to save a configuration/);
     expect(calls.some((c) => c.method === "POST")).toBe(true);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("warns and resyncs when deleting a persisted rule fails server-side", async () => {
+    const user = userEvent.setup();
+    const calls = stubFetch({ failDelete: true });
+    render(<ServiceSecurityList serviceId="svc-1" serviceName="svc" />);
+    await waitForCard();
+
+    // open the delete confirm dialog, then confirm inside it
+    await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "DELETE" && c.url.endsWith("/old-1"))
+      ).toBe(true)
+    );
+    // a 500 must surface — not be swallowed like a thrown fetch — and the list
+    // is refetched so the still-live rule reappears.
+    await screen.findByText(/it may still be active/i);
+    // the resync GET runs after the failed DELETE
+    const lastDelete = calls.map((c) => c.method).lastIndexOf("DELETE");
+    expect(
+      calls.some((c, i) => c.method === "GET" && i > lastDelete)
+    ).toBe(true);
   });
 });

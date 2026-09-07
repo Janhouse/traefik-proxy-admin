@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   BackendHealthResponse,
   CertificatesResponse,
@@ -30,29 +30,39 @@ function useFetched<T>(url: string, pollMs = 0) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Guards against out-of-order polls and post-unmount writes: only the newest
+  // request (by seq) may commit, and only while still mounted.
+  const mounted = useRef(true);
+  const seq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const id = ++seq.current;
     try {
       const res = await fetch(url, { cache: "no-store" });
+      const body = res.ok ? ((await res.json()) as T) : null;
+      if (!mounted.current || id !== seq.current) return;
       if (res.ok) {
-        setData((await res.json()) as T);
+        setData(body as T);
         setError(null);
       } else {
         setError(describeFailure(res));
       }
     } catch (err) {
+      if (!mounted.current || id !== seq.current) return;
       setError(describeFailure(null, err));
     } finally {
-      setLoading(false);
+      if (mounted.current && id === seq.current) setLoading(false);
     }
   }, [url]);
 
   useEffect(() => {
+    mounted.current = true;
     refresh();
-    if (pollMs > 0) {
-      const id = setInterval(refresh, pollMs);
-      return () => clearInterval(id);
-    }
+    const iv = pollMs > 0 ? setInterval(refresh, pollMs) : null;
+    return () => {
+      mounted.current = false;
+      if (iv) clearInterval(iv);
+    };
   }, [refresh, pollMs]);
 
   return { data, loading, error, refresh };

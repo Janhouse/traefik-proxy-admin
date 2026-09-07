@@ -154,12 +154,13 @@ export function ServiceSecurityList({
               removed = false;
             }
             if (!removed) {
-              // Both rules now exist server-side: say so and resync the list
-              // so the leftover shows up and can be deleted by hand.
+              // Both rules now exist server-side: resync the list first (it
+              // clears `error` on entry) so the leftover shows up, THEN report
+              // so the message isn't wiped by the refetch.
+              await fetchConfigs();
               setError(
                 "The new rule was saved but the rule it replaces could not be removed — delete it below."
               );
-              void fetchConfigs();
               return;
             }
           }
@@ -261,12 +262,22 @@ export function ServiceSecurityList({
       const persistedId = it?.id ?? it?._replaces;
       if (persistedId) {
         try {
-          await fetch(`/api/services/security-configs/${persistedId}`, {
-            method: "DELETE",
-          });
+          const del = await fetch(
+            `/api/services/security-configs/${persistedId}`,
+            { method: "DELETE" }
+          );
+          // A non-2xx leaves the rule live server-side while we've dropped it
+          // from the list — resync FIRST so the leftover reappears (fetchConfigs
+          // clears `error` on entry), THEN report so the message survives.
+          if (!del.ok) {
+            await fetchConfigs();
+            setError(
+              "Failed to delete a configuration — it may still be active; it has been restored to the list."
+            );
+          }
         } catch {
+          await fetchConfigs();
           setError("Failed to delete a configuration.");
-          fetchConfigs();
         }
       }
     },

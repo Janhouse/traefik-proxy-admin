@@ -234,6 +234,14 @@ export function RouteRuleEditor({
   const conflict = (() => {
     if (!conflicts?.reachable || resolvedHosts.length === 0) return null;
     const mine = new Map(resolvedHosts.map((h) => [h.toLowerCase(), h]));
+    // Scan ALL overlapping routers and prefer a blocking one: a non-blocking
+    // overlap earlier in the list must not mask a genuine block later in it.
+    let firstOverlap: {
+      router: (typeof conflicts.routers)[number];
+      host: string;
+      foreign: boolean;
+      blocking: boolean;
+    } | null = null;
     for (const r of conflicts.routers) {
       if (r.internal) continue; // our own cert-trigger routers are not conflicts
       if (r.managedServiceId && serviceId && r.managedServiceId === serviceId)
@@ -246,7 +254,7 @@ export function RouteRuleEditor({
       // so it would collide outright. Read defensively until the API type
       // carries the field.
       const hostOnly = (r as { hostOnly?: boolean }).hostOnly === true;
-      return {
+      const c = {
         router: r,
         host: mine.get(hit.toLowerCase()) ?? hit,
         foreign: !r.managedServiceId,
@@ -254,8 +262,10 @@ export function RouteRuleEditor({
         // extra matchers merely overlaps and gets a warning
         blocking: !r.managedServiceId && hostOnly,
       };
+      if (c.blocking) return c; // a genuine block wins immediately
+      if (!firstOverlap) firstOverlap = c; // otherwise keep the first warning
     }
-    return null;
+    return firstOverlap;
   })();
 
   const blocked = !!conflict?.blocking || hostMissing;
