@@ -44,13 +44,38 @@ started_at=0
 unproven=0
 mount_warned=0
 rejected_logged=0
+# Hash of the config Traefik has PROVEN (survived the grace period). Reported
+# back to the panel so its status reflects what Traefik actually runs, not just
+# what it last fetched. Empty until something has been proven.
+applied_hash=""
 
 log() { echo "[traefik-wrapper] $1"; }
 warn() { echo "[traefik-wrapper] WARNING: $1" >&2; }
 now() { date +%s; }
 
+# sha256 of a file, or empty if sha256sum is unavailable (degrade to "never
+# report a proven hash" — the panel then honestly stays "waiting").
+sha256_of() {
+    command -v sha256sum >/dev/null 2>&1 || return 1
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+}
+
+# Fetch the static config, telling the panel which hash we've PROVEN and which
+# we're REJECTING so its status is honest. busybox wget sends no
+# Accept-Encoding, so the bytes we write (and hash) are identical to what the
+# panel served and hashed — the hashes line up on both sides.
 fetch_config() {
-    wget -q -T 5 -O "$TMP_FILE" "$STATIC_URL" 2>/dev/null && [ -s "$TMP_FILE" ]
+    _url="$STATIC_URL"
+    _sep="?"
+    if [ -n "$applied_hash" ]; then
+        _url="$_url${_sep}applied=$applied_hash"
+        _sep="&"
+    fi
+    if [ -s "$REJECTED_CONFIG" ]; then
+        _rej=$(sha256_of "$REJECTED_CONFIG")
+        [ -n "$_rej" ] && _url="$_url${_sep}rejected=$_rej"
+    fi
+    wget -q -T 5 -O "$TMP_FILE" "$_url" 2>/dev/null && [ -s "$TMP_FILE" ]
 }
 
 # Copy the panel's materialised env file into $TMP_ENV. The file may
@@ -69,10 +94,11 @@ read_secrets() {
 }
 
 # Minimal config so Traefik still serves (and keeps polling the panel's
-# DYNAMIC config) if the panel is down at boot. The wrapper keeps retrying
-# the static fetch afterwards and restarts into the real config.
+# DYNAMIC config, which keeps the admin route reachable) when the panel is
+# down at boot OR its static config is bad and there's no last-good to fall
+# back to. The caller logs the reason; the wrapper keeps retrying the static
+# fetch afterwards and restarts into the real config once it's fixed.
 write_fallback_config() {
-    log "panel unreachable after ${STARTUP_TIMEOUT_SECONDS}s — starting with fallback config"
     cat > "$CONFIG_FILE" <<EOF
 log:
   level: INFO
@@ -102,7 +128,11 @@ snapshot_last_good() {
 }
 
 restore_last_good() {
-    cp "$LAST_GOOD_CONFIG" "$CONFIG_FILE"
+    cp "$LAST_GOOD_CONFIG" "$CONFIG_FILE" || return 1
+    # last-good is proven by definition — report it as applied so the panel's
+    # status doesn't get overwritten with null on the next poll (covers both
+    # the startup-fallback and the crash-rollback paths).
+    applied_hash=$(sha256_of "$CONFIG_FILE") || applied_hash=""
 }
 
 # Remember the config that just killed Traefik so the poll loop skips it.
@@ -116,6 +146,19 @@ is_rejected_config() {
     cmp -s "$1" "$REJECTED_CONFIG"
 }
 
+shutdown() {
+    log "shutting down"
+    if [ -n "$CHILD" ]; then
+        kill "$CHILD" 2>/dev/null
+        wait "$CHILD" 2>/dev/null
+    fi
+    exit 0
+}
+# Install the trap BEFORE the startup fetch loop so a TERM/INT during first
+# boot (up to STARTUP_TIMEOUT_SECONDS) is handled too. CHILD is "" until
+# Traefik starts, and shutdown guards on that.
+trap shutdown TERM INT
+
 mkdir -p "$(dirname "$CONFIG_FILE")" "$(dirname "$ENV_FILE")"
 # Start from a known-empty env file so the first credential read only restarts
 # Traefik when credentials actually exist.
@@ -128,6 +171,7 @@ until fetch_config; do
         if have_last_good && restore_last_good; then
             log "panel unreachable after ${STARTUP_TIMEOUT_SECONDS}s — starting from last-good config"
         else
+            log "panel unreachable after ${STARTUP_TIMEOUT_SECONDS}s — starting with the minimal fallback config"
             write_fallback_config
         fi
         break
@@ -166,33 +210,31 @@ start_traefik() {
     log "traefik started (pid $CHILD)"
 }
 
-shutdown() {
-    log "shutting down"
-    if [ -n "$CHILD" ]; then
-        kill "$CHILD" 2>/dev/null
-        wait "$CHILD" 2>/dev/null
-    fi
-    exit 0
-}
-trap shutdown TERM INT
-
-# Called when Traefik exits on its own. Rolls back to last-good if the
-# running config was unproven and a last-good exists; otherwise exits so
-# compose's restart policy recovers.
+# Called when Traefik exits on its own. If it died on an UNPROVEN config (one
+# that hasn't survived the grace period), that config is being rejected: roll
+# back to last-good if we have one, otherwise start the minimal fallback so the
+# panel stays reachable and the config can be fixed — never leave the bundle in
+# a crash-loop with no ingress. Either way the rejected config is remembered so
+# the poll loop won't re-apply it until the panel serves something new.
 handle_child_exit() {
     wait "$CHILD"
     code=$?
     CHILD=""
-    if [ "$unproven" -eq 1 ] && have_last_good; then
+    if [ "$unproven" -eq 1 ]; then
         warn "traefik exited (code $code) within ${GRACE_SECONDS}s of applying a NEW static config — the panel's current config is being REJECTED"
-        warn "rolling back to the last-good config; fix the config in the panel to try again"
+        # Remember the bad config BEFORE anything overwrites CONFIG_FILE.
         remember_rejected
-        if restore_last_good; then
-            unproven=0
-            start_traefik
-            return 0
+        if have_last_good && restore_last_good; then
+            warn "rolled back to the last-good config; fix the config in the panel to try again"
+        else
+            warn "no last-good config yet — starting the minimal fallback so the panel stays reachable; fix the config in the panel to try again"
+            write_fallback_config
+            # The fallback is not the panel's config — report nothing as applied.
+            applied_hash=""
         fi
-        warn "failed to restore last-good config"
+        unproven=0
+        start_traefik
+        return 0
     fi
     log "traefik exited unexpectedly (code $code)"
     exit "$code"
@@ -213,6 +255,10 @@ while true; do
             continue
         fi
         if [ "$unproven" -eq 1 ] && [ $(($(now) - started_at)) -ge "$GRACE_SECONDS" ]; then
+            # Proof is survival, not persistence: this config is now what
+            # Traefik runs, so report it as applied even if the last-good
+            # snapshot below can't be written.
+            applied_hash=$(sha256_of "$CONFIG_FILE") || applied_hash=""
             if snapshot_last_good; then
                 rm -f "$REJECTED_CONFIG"
             else

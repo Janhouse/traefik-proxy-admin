@@ -63,7 +63,12 @@ async function buildResponse(): Promise<ManagedModeResponse> {
   // its poll interval, so "pending" for secrets means the env file on the
   // mount does not yet match what the store holds (or is missing).
   const secretsStale = secretsEnv.hash !== secretMeta.hash;
-  const pending = state.lastFetchedHash !== currentHash || secretsStale;
+  // "Applied" means the wrapper has PROVEN this exact config (ran it past the
+  // grace period), not merely fetched it — a fetched-but-rejected config never
+  // counts. "Rejected" is the wrapper telling us the DB's current config is the
+  // one it just rolled back away from.
+  const pending = state.lastAppliedHash !== currentHash || secretsStale;
+  const rejected = state.rejectedHash !== null && state.rejectedHash === currentHash;
   return {
     managed: true,
     adminAuthConfigured,
@@ -77,9 +82,10 @@ async function buildResponse(): Promise<ManagedModeResponse> {
     },
     status: {
       currentHash,
-      lastFetchedHash: state.lastFetchedHash,
+      lastAppliedHash: state.lastAppliedHash,
       lastFetchedAt: state.lastFetchedAt,
       pending,
+      rejected,
     },
   };
 }

@@ -53,11 +53,16 @@ export const DEFAULT_MANAGED_STATIC_CONFIG: ManagedStaticConfig = {
 export interface ManagedStaticStatus {
   /** Hash of the YAML built from the current DB config. */
   currentHash: string;
-  /** Hash/timestamp of what the Traefik wrapper last fetched. */
-  lastFetchedHash: string | null;
+  /** Hash the wrapper has PROVEN it is running (survived the grace period).
+   * Null until a config has been proven. */
+  lastAppliedHash: string | null;
+  /** When the wrapper last polled — the UI's liveness heartbeat. */
   lastFetchedAt: string | null;
   /** True while Traefik runs an older config than the DB holds. */
   pending: boolean;
+  /** True when the DB's current config is the one Traefik just rejected and
+   * rolled back from. `pending` is also true then; this says WHY. */
+  rejected: boolean;
 }
 
 export interface ManagedModeResponse {
@@ -367,9 +372,13 @@ export function validateManagedStaticConfig(
 
   validateEntrypoints(entrypoints, new Set(certResolvers.map((r) => r.name)), errors);
   validateResolvers(certResolvers, new Set(entrypoints.map((e) => e.name)), errors);
-  if (certResolvers.length > 0 && !entrypoints.some((e) => e.tls?.enabled)) {
+  if (!entrypoints.some((e) => e.tls?.enabled)) {
+    // The admin panel router is published ONLY on TLS-enabled entrypoints (see
+    // createAdminPanelRoute). A config with none would leave that router with
+    // no entrypoint to bind — Traefik starts fine but the panel, the bundle's
+    // only ingress, becomes unreachable. Refuse it here; there's no recovery.
     errors.push(
-      "A certificate resolver is defined but no entrypoint has TLS enabled — enable TLS on an entrypoint (usually :443) or remove the resolver."
+      "No entrypoint has TLS enabled. The admin panel is published only on TLS entrypoints, so a config without one would make the panel unreachable — enable TLS on an entrypoint (usually :443)."
     );
   }
 

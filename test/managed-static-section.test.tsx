@@ -53,9 +53,10 @@ function managedResponse(over: Partial<ManagedModeResponse> = {}): ManagedModeRe
     secretNames: [],
     status: {
       currentHash: "h1",
-      lastFetchedHash: "h1",
+      lastAppliedHash: "h1",
       lastFetchedAt: "2026-06-13T00:00:00.000Z",
       pending: false,
+      rejected: false,
     },
     ...over,
   };
@@ -99,14 +100,33 @@ describe("ManagedStaticSection", () => {
       managedResponse({
         status: {
           currentHash: "h2",
-          lastFetchedHash: "h1",
+          lastAppliedHash: "h1",
           lastFetchedAt: "2026-06-13T00:00:00.000Z",
           pending: true,
+          rejected: false,
         },
       })
     );
     render(<ManagedStaticSection />);
     expect(await screen.findByText(/Waiting for Traefik restart/)).toBeDefined();
+  });
+
+  it("shows the rejected chip when Traefik rolled back from the current config", async () => {
+    stubFetch(
+      managedResponse({
+        status: {
+          currentHash: "h2",
+          lastAppliedHash: "h1",
+          lastFetchedAt: "2026-06-13T00:00:00.000Z",
+          pending: true,
+          rejected: true,
+        },
+      })
+    );
+    render(<ManagedStaticSection />);
+    expect(
+      await screen.findByText(/Traefik rejected this config and rolled back/)
+    ).toBeDefined();
   });
 
   it("warns when ADMIN_PANEL_AUTH is missing", async () => {

@@ -51,9 +51,11 @@ function credentialHint(config: ManagedStaticConfig): string {
 
 function StatusChip({
   pending,
+  rejected,
   lastFetchedAt,
 }: {
   pending: boolean;
+  rejected: boolean;
   lastFetchedAt: string | null;
 }) {
   if (!lastFetchedAt) {
@@ -61,6 +63,14 @@ function StatusChip({
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] px-2.5 py-1 text-[12px] text-[var(--meta)]">
         <Clock className="h-3.5 w-3.5" />
         Traefik hasn&apos;t fetched the static config yet
+      </span>
+    );
+  }
+  if (rejected) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--danger)_40%,transparent)] bg-[var(--danger)]/10 px-2.5 py-1 text-[12px] text-[var(--danger)]">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        Traefik rejected this config and rolled back — fix it and save again
       </span>
     );
   }
@@ -117,6 +127,7 @@ export function ManagedStaticSection() {
           {status && (
             <StatusChip
               pending={status.pending}
+              rejected={status.rejected}
               lastFetchedAt={status.lastFetchedAt}
             />
           )}

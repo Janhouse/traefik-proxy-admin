@@ -152,7 +152,15 @@ const MANAGED_SECRETS_LEGACY_KEY = "managed_secrets";
 
 export interface ManagedStaticState {
   lastFetchedAt: string | null;
-  lastFetchedHash: string | null;
+  /** Hash the wrapper reports it has PROVEN — i.e. a config Traefik actually
+   * ran past the grace period. A config that was fetched but then rejected and
+   * rolled back away from never lands here, so the status can't claim a
+   * rejected config is "applied". Null until something has been proven. */
+  lastAppliedHash: string | null;
+  /** Hash of the config the wrapper is currently REFUSING to run (rolled back
+   * away from), or null. When it equals the DB's current hash, the panel is
+   * serving a config Traefik won't accept. */
+  rejectedHash: string | null;
 }
 
 export async function getManagedStaticConfig(): Promise<ManagedStaticConfig> {
@@ -187,25 +195,32 @@ export async function getManagedStaticState(): Promise<ManagedStaticState> {
     const saved = await readConfigValue<ManagedStaticState>(MANAGED_STATIC_STATE_KEY);
     return {
       lastFetchedAt: saved?.lastFetchedAt ?? null,
-      lastFetchedHash: saved?.lastFetchedHash ?? null,
+      lastAppliedHash: saved?.lastAppliedHash ?? null,
+      rejectedHash: saved?.rejectedHash ?? null,
     };
   } catch (error) {
     console.error("Error fetching managed static state:", error);
-    return { lastFetchedAt: null, lastFetchedHash: null };
+    return { lastFetchedAt: null, lastAppliedHash: null, rejectedHash: null };
   }
 }
 
-export async function recordManagedStaticFetch(hash: string): Promise<void> {
-  const prev = await getManagedStaticState();
+/** Record one wrapper poll. Every poll bumps `lastFetchedAt` (the UI's liveness
+ * heartbeat). `appliedHash` is the hash the wrapper reports it has PROVEN;
+ * `rejectedHash` the config it is currently refusing to run. The wrapper
+ * reports both on every poll, so a null clears a previously-recorded value. */
+export async function recordManagedStaticFetch(report: {
+  appliedHash: string | null;
+  rejectedHash: string | null;
+}): Promise<void> {
   const state: ManagedStaticState = {
-    ...prev,
     lastFetchedAt: new Date().toISOString(),
-    lastFetchedHash: hash,
+    lastAppliedHash: report.appliedHash,
+    rejectedHash: report.rejectedHash,
   };
   await upsertConfigValue(
     MANAGED_STATIC_STATE_KEY,
     JSON.stringify(state),
-    "Last static config fetch by the managed Traefik wrapper"
+    "Last static config poll by the managed Traefik wrapper (proven/rejected hashes)"
   );
 }
 
