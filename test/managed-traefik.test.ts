@@ -216,16 +216,18 @@ describe("validateManagedStaticConfig", () => {
     reject(dns("$(evil)"), /not a valid DNS provider code/);
   });
 
-  it("requires a TLS-capable entrypoint whenever a resolver exists", () => {
+  it("requires at least one TLS-enabled entrypoint (the admin panel is TLS-only)", () => {
     reject(
-      { ...valid, entrypoints: [{ name: "web", port: 80 }] },
-      /no entrypoint has TLS enabled/
+      { ...valid, entrypoints: [{ name: "web", port: 80 }], certResolvers: [] },
+      /No entrypoint has TLS enabled/
     );
-    // no resolvers → plain http is fine
-    expect(
-      validateManagedStaticConfig({ entrypoints: [{ name: "web", port: 80 }], certResolvers: [] })
-        .ok
-    ).toBe(true);
+    // even with no resolvers a TLS entrypoint is required: the admin panel
+    // router is published only on TLS entrypoints, so a config without one
+    // would leave it with nothing to bind — an unrecoverable lockout.
+    reject(
+      { entrypoints: [{ name: "web", port: 80 }], certResolvers: [] },
+      /No entrypoint has TLS enabled/
+    );
   });
 
   it("type-checks fields instead of coercing (undefined name is not 'undefined')", () => {
