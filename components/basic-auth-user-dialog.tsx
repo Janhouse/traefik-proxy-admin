@@ -120,7 +120,7 @@ export function BasicAuthUserDialog({
                 disabled={submitting}
               />
               {formErrors.username && (
-                <p className="text-sm text-red-600">{formErrors.username}</p>
+                <p className="text-sm text-[var(--danger)]">{formErrors.username}</p>
               )}
             </div>
 
@@ -153,7 +153,7 @@ export function BasicAuthUserDialog({
                 </Button>
               </div>
               {formErrors.password && (
-                <p className="text-sm text-red-600">{formErrors.password}</p>
+                <p className="text-sm text-[var(--danger)]">{formErrors.password}</p>
               )}
             </div>
           </div>

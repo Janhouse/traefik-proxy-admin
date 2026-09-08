@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/toaster";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,6 +41,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
+          {/* Mounted once at the root so toasts fired right before a
+              router.push() (e.g. "Service created") survive the navigation. */}
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

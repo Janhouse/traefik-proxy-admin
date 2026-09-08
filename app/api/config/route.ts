@@ -26,9 +26,16 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Ensure globalMiddlewares is an array
+    // Ensure array fields are arrays (legacy single `defaultEntrypoint` is
+    // still accepted and migrated inside updateGlobalConfig)
     if (!Array.isArray(body.globalMiddlewares)) {
       body.globalMiddlewares = [];
+    }
+    if (
+      body.defaultEntrypoints !== undefined &&
+      !Array.isArray(body.defaultEntrypoints)
+    ) {
+      body.defaultEntrypoints = [];
     }
 
     await updateGlobalConfig(body);

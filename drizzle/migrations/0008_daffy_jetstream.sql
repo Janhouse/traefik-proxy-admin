@@ -1,1 +1,1 @@
-ALTER TABLE "services" ADD COLUMN "entrypoint" varchar(255);
+ALTER TABLE "services" ADD COLUMN IF NOT EXISTS "entrypoint" varchar(255);

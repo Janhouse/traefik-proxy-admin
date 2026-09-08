@@ -1,0 +1,9 @@
+# Local test certificates so the /api/certificates store is non-empty.
+# The .key/.crt files are gitignored — run scripts/generate-dev-certs.sh
+# to create them before starting docker-compose.test.yml.
+tls:
+  certificates:
+    - certFile: /etc/traefik/dynamic/dev-ok.crt
+      keyFile: /etc/traefik/dynamic/dev-ok.key
+    - certFile: /etc/traefik/dynamic/dev-legacy.crt
+      keyFile: /etc/traefik/dynamic/dev-legacy.key

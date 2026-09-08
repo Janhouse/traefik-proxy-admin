@@ -1,12 +1,14 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Plus, RefreshCw } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
-import { ServiceTable } from "@/components/service-table";
+import { PageBand, PageMain } from "@/components/page-band";
+import { ServiceTable, type Service } from "@/components/service-table";
+import { Button } from "@/components/ui/button";
 import { useServices } from "@/hooks/use-services";
-import { useRouter } from "next/navigation";
-import type { Service } from "@/components/service-table";
+import { useBackendHealth, useTraefikMetrics } from "@/hooks/use-traefik";
 
 export default function ServicesPage() {
   const {
@@ -17,70 +19,72 @@ export default function ServicesPage() {
     toggleService,
     generateShareLink,
   } = useServices();
-
+  const { health, refresh: refreshHealth } = useBackendHealth(15000);
+  const { metrics, refresh: refreshMetrics } = useTraefikMetrics(30000);
   const router = useRouter();
 
-  const handleAddNew = () => {
-    router.push("/services/add");
+  useEffect(() => {
+    fetchServices();
+  }, [fetchServices]);
+
+  const refreshAll = () => {
+    fetchServices();
+    refreshHealth();
+    refreshMetrics();
   };
 
-  const handleEdit = (service: Service) => {
-    router.push(`/services/${service.id}/edit`);
-  };
-
-  const handleManageSecurity = (service: Service) => {
+  const handleManageSecurity = (service: Service) =>
     router.push(`/services/${service.id}/security`);
-  };
 
-  const handleGenerateShareLink = async (serviceId: string) => {
+  const handleShare = async (serviceId: string) => {
     try {
-      const url = await generateShareLink(serviceId);
-      // Copy to clipboard
-      await navigator.clipboard.writeText(url);
-      // Could add a toast notification here
+      await generateShareLink(serviceId);
     } catch (error) {
       console.error("Failed to generate share link:", error);
     }
   };
 
+  const enabledCount = services.filter((s) => s.enabled).length;
+
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold">Services</h1>
-            <p className="text-muted-foreground">
-              Manage your Traefik proxy services
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={fetchServices}
-              disabled={loading}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+      <PageBand
+        eyebrow="Manage"
+        title="Services"
+        subtitle={
+          <>
+            {services.length} proxy route{services.length === 1 ? "" : "s"} ·{" "}
+            <span className="font-mono text-[var(--success)]">
+              {enabledCount} enabled
+            </span>
+          </>
+        }
+        actions={
+          <>
+            <Button variant="outline" onClick={refreshAll} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button onClick={handleAddNew}>
-              <Plus className="h-4 w-4 mr-2" />
+            <Button className="btn-brand" onClick={() => router.push("/services/add")}>
+              <Plus className="h-4 w-4" />
               Add Service
             </Button>
-          </div>
-        </div>
-
+          </>
+        }
+      />
+      <PageMain>
         <ServiceTable
           services={services}
           loading={loading}
-          onAddNew={handleAddNew}
-          onEdit={handleEdit}
+          health={health}
+          metrics={metrics}
           onDelete={deleteService}
           onToggle={toggleService}
           onManageSecurity={handleManageSecurity}
-          onGenerateShareLink={handleGenerateShareLink}
-          onRefresh={fetchServices}
+          onGenerateShareLink={handleShare}
+          onRefresh={refreshAll}
         />
-      </div>
+      </PageMain>
     </AppLayout>
   );
 }

@@ -52,6 +52,11 @@ COPY ./entrypoint.sh ./
 
 RUN mkdir -p /app/.next/cache && chown nextjs:nodejs /app/.next/cache
 
+# Writable home for the encrypted managed-credentials file. A named volume
+# mounted here inherits this ownership on first creation, so the non-root
+# nextjs user can write it (MANAGED_SECRETS_FILE defaults under /data).
+RUN mkdir -p /data && chown nextjs:nodejs /data
+
 USER nextjs
 
 EXPOSE 3000

@@ -1,7 +1,32 @@
 import "server-only";
 import { db, services, domains } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { getGlobalConfig, type GlobalTraefikConfig } from "./app-config";
+import {
+  assembleRule,
+  assembleRuleFromTree,
+  hostsInTree,
+  parseEntrypoints,
+  parseMatchRules,
+  treeHasHost,
+  type DomainResolver,
+} from "@/lib/route-rule";
+import {
+  entrypointTlsFromApi,
+  isTlsEntrypoint,
+  resolveEntrypointTlsInfo,
+  type EntrypointTlsInfo,
+} from "./entrypoint-tls";
+import {
+  getGlobalConfig,
+  getManagedStaticConfig,
+  type GlobalTraefikConfig,
+} from "./app-config";
+import {
+  isManagedMode,
+  panelInternalUrl,
+  parseAdminPanelAuthUsers,
+} from "./managed-traefik";
+import type { ManagedStaticConfig } from "./managed-traefik-types";
 import { BasicAuthService } from "./services/basic-auth.service";
 import { ServiceSecurityService } from "./services/service-security.service";
 import { TRAEFIK_SESSION_COOKIE } from "./constants";
@@ -22,6 +47,9 @@ export interface TraefikRouter {
   service: string;
   middlewares?: string[];
   entryPoints?: string[];
+  /** Higher wins when two routers match the same request. Traefik defaults it
+   * to the rule length; we set it explicitly only where ordering matters. */
+  priority?: number;
   tls?: {
     certResolver?: string;
     domains?: Array<{
@@ -119,13 +147,58 @@ function parseCustomHostnames(customHostnames: string | null): string[] {
   }
 }
 
+/** The rows every identifier decision is made against: ALL services (enabled
+ * or not) joined to their domain, so names stay stable across enable toggles. */
+export type ServiceDomainRow = { service: Service; domain: Domain | null };
+
 /**
- * Generate service identifier based on hostname mode
+ * Subdomains that exist under MORE THAN ONE domain across the estate. Only
+ * those get the domain appended to their identifier (see
+ * generateServiceIdentifier); every other subdomain service keeps the bare
+ * `router-<sub>` / `service-<sub>` / `auth-…-<sub>` names main produced.
  */
-function generateServiceIdentifier(service: Service, domain: Domain): string {
+export function ambiguousSubdomains(
+  rows: Array<{
+    service: Pick<Service, "hostnameMode" | "subdomain">;
+    domain: Pick<Domain, "domain"> | null;
+  }>
+): Set<string> {
+  const domainsBySub = new Map<string, Set<string>>();
+  for (const { service, domain } of rows) {
+    if (!domain || service.hostnameMode !== "subdomain" || !service.subdomain) continue;
+    const set = domainsBySub.get(service.subdomain) ?? new Set<string>();
+    set.add(domain.domain);
+    domainsBySub.set(service.subdomain, set);
+  }
+  const out = new Set<string>();
+  for (const [sub, doms] of domainsBySub) {
+    if (doms.size > 1) out.add(sub);
+  }
+  return out;
+}
+
+/**
+ * Generate service identifier based on hostname mode.
+ * Exported so the metrics scraper / conflict detector can map a Traefik
+ * `router-<identifier>` label back to the owning admin service.
+ *
+ * Subdomain mode uses the bare subdomain ("app") — exactly what main produced,
+ * so an upgrade renames nothing — UNLESS `ambiguous` (see ambiguousSubdomains)
+ * says the same subdomain exists under two domains; then the domain is
+ * appended ("app-example-com") so the two can't overwrite each other's
+ * routers/services/middlewares. Apex and custom modes are unchanged from main.
+ */
+export function generateServiceIdentifier(
+  service: Service,
+  domain: Domain,
+  ambiguous?: ReadonlySet<string>
+): string {
   switch (service.hostnameMode) {
     case 'subdomain':
-      return service.subdomain || 'default';
+      if (!service.subdomain) return 'default';
+      return ambiguous?.has(service.subdomain)
+        ? `${service.subdomain}.${domain.domain}`.replace(/\./g, '-')
+        : service.subdomain;
     case 'apex':
       return domain.domain.replace(/\./g, '-');
     case 'custom':
@@ -136,6 +209,135 @@ function generateServiceIdentifier(service: Service, domain: Domain): string {
     default:
       return service.subdomain || service.id.substring(0, 8);
   }
+}
+
+/** Slug an entrypoint name for use inside a router name. */
+function slugifyEntrypoint(ep: string): string {
+  return ep.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/** Router names emitted for a given identifier + resolved entrypoint list. */
+function routerNamesForIdentifier(identifier: string, eps: string[]): string[] {
+  const base = `router-${identifier}`;
+  if (eps.length <= 1) return [base];
+  return [base, ...eps.map((ep) => `${base}-${slugifyEntrypoint(ep)}`)];
+}
+
+/**
+ * Resolve a service's entrypoint list from its columns. A non-null
+ * `entrypoints` column owns the truth even when it parses empty — only a null
+ * column falls back to the legacy single `entrypoint`. The API writer
+ * (mapServiceRequestBody) stores "none selected" as null AND clears the legacy
+ * column, so both shapes resolve to [] (→ the global default); a stray "[]"
+ * from an older writer resolves to [] too.
+ */
+export function resolveServiceEntrypoints(service: Service): string[] {
+  if (service.entrypoints !== null && service.entrypoints !== undefined) {
+    return parseEntrypoints(service.entrypoints);
+  }
+  return service.entrypoint ? [service.entrypoint] : [];
+}
+
+/** Global default entrypoints, tolerating the legacy single-value config. */
+function globalDefaultEntrypoints(globalConfig: GlobalTraefikConfig): string[] {
+  if (globalConfig.defaultEntrypoints?.length) return globalConfig.defaultEntrypoints;
+  return globalConfig.defaultEntrypoint ? [globalConfig.defaultEntrypoint] : [];
+}
+
+/**
+ * Default entrypoints suitable for cert-trigger routers: those routers always
+ * carry `tls`, so binding a plain-HTTP default (e.g. `web`) would serve TLS
+ * on :80. Empty result means "omit entryPoints" (Traefik then binds all, and
+ * a tls router simply never matches plain-HTTP entrypoints).
+ */
+function tlsDefaultEntrypoints(
+  globalConfig: GlobalTraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
+): string[] {
+  return globalDefaultEntrypoints(globalConfig).filter((ep) =>
+    isTlsEntrypoint(ep, epTlsInfo.get(ep))
+  );
+}
+
+/**
+ * All router names this service currently emits into Traefik. With multiple
+ * entrypoints, one router per entrypoint (`router-<id>-<ep>`); the un-suffixed
+ * base name is always included.
+ */
+export function serviceRouterNames(
+  service: Service,
+  domain: Domain,
+  ambiguous?: ReadonlySet<string>
+): string[] {
+  const eps = resolveServiceEntrypoints(service);
+  const identifier = generateServiceIdentifier(service, domain, ambiguous);
+  // Identifier collisions during generation get a deterministic `-<serviceId8>`
+  // suffix (see createTraefikService); include those names too so a collided
+  // service still maps back instead of surfacing as a foreign router.
+  return [
+    ...routerNamesForIdentifier(identifier, eps),
+    ...routerNamesForIdentifier(`${identifier}-${service.id.slice(0, 8)}`, eps),
+  ];
+}
+
+/**
+ * Build a matcher from runtime router names back to owning service ids.
+ *
+ * Exact names (serviceRouterNames) are tried first; otherwise the LONGEST
+ * `router-<identifier>` prefix wins. The prefix pass is what keeps a service
+ * attributed to itself while Traefik still serves routers generated from an
+ * OLD entrypoint selection (`router-<id>-<oldEp>` no longer appears in
+ * serviceRouterNames once the selection changes) — without it the editor
+ * flags the service's own stale routers as foreign and blocks saving.
+ * Longest-prefix ordering disambiguates identifiers that prefix each other
+ * (e.g. app-example-com vs app-example-com-mx). `rows` must be ALL services
+ * (the same set generation names against) so ambiguous subdomains resolve to
+ * the same identifiers here as in the emitted config.
+ */
+export function routerServiceMatcher(
+  rows: ServiceDomainRow[]
+): (bareRouterName: string) => string | null {
+  const ambiguous = ambiguousSubdomains(rows);
+  const exact = new Map<string, string>();
+  const prefixes: Array<{ base: string; serviceId: string }> = [];
+  for (const { service, domain } of rows) {
+    if (!domain) continue;
+    for (const name of serviceRouterNames(service, domain, ambiguous)) {
+      exact.set(name, service.id);
+    }
+    const identifier = generateServiceIdentifier(service, domain, ambiguous);
+    prefixes.push({ base: `router-${identifier}`, serviceId: service.id });
+    prefixes.push({
+      base: `router-${identifier}-${service.id.slice(0, 8)}`,
+      serviceId: service.id,
+    });
+  }
+  prefixes.sort((a, b) => b.base.length - a.base.length);
+  return (bareRouterName: string) => {
+    const hit = exact.get(bareRouterName);
+    if (hit) return hit;
+    for (const { base, serviceId } of prefixes) {
+      if (bareRouterName.startsWith(`${base}-`)) return serviceId;
+    }
+    return null;
+  };
+}
+
+/** Path matcher appended to cert-trigger router rules so they can never steal
+ * real traffic from a service that claims the same Host(). */
+const CERT_TRIGGER_PATH = "/.well-known/traefik-cert-trigger";
+
+/** Exact router name of the wildcard cert trigger generated for a domain. */
+export function wildcardCertRouterName(domain: Domain): string {
+  return `wildcard-cert-router-${domain.domain.replace(/\./g, '-')}`;
+}
+
+/** Exact router names of the per-certificate-config triggers for a domain. */
+export function certTriggerRouterNames(domain: Domain): string[] {
+  return parseCertificateConfigs(domain.certificateConfigs).map(
+    (certConfig) =>
+      `cert-router-${certConfig.name.replace(/[^a-zA-Z0-9]/g, '-')}-${certConfig.main.replace(/\./g, '-')}`
+  );
 }
 
 /**
@@ -164,12 +366,11 @@ function generateServiceHostnames(service: Service, domain: Domain): string[] {
  */
 async function buildServiceMiddlewares(
   service: Service,
-  domain: Domain,
+  serviceIdentifier: string,
   globalConfig: GlobalTraefikConfig,
   config: TraefikConfig
 ): Promise<string[]> {
   const middlewares: string[] = [];
-  const serviceIdentifier = generateServiceIdentifier(service, domain);
 
   // Add global middlewares first
   if (globalConfig.globalMiddlewares.length > 0) {
@@ -190,7 +391,9 @@ async function buildServiceMiddlewares(
         const authMiddlewareName = `auth-${securityConfig.securityType}-${serviceIdentifier}`;
         config.http.middlewares![authMiddlewareName] = {
           forwardAuth: {
-            address: `http://${globalConfig.adminPanelDomain}/api/auth/verify?serviceId=${service.id}&configId=${securityConfig.id}`,
+            // Traefik calls this server-side; in the managed bundle the
+            // internal container URL skips the public route (and its basicAuth)
+            address: `${panelInternalUrl(globalConfig.adminPanelDomain)}/api/auth/verify?serviceId=${service.id}&configId=${securityConfig.id}`,
             trustForwardHeader: true,
             addAuthCookiesToResponse: [TRAEFIK_SESSION_COOKIE],
             authRequestHeaders: ["Accept", "Cookie", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Uri"],
@@ -257,24 +460,76 @@ async function buildServiceMiddlewares(
 }
 
 /**
- * Create Traefik service configuration for a single service
+ * Create Traefik service configuration for a single service.
+ *
+ * Emits one router PER entrypoint (identical rule/service/middlewares) so a
+ * service spanning plain-HTTP and TLS entrypoints works on both: a single
+ * router with `tls` would be HTTPS-only on EVERY bound entrypoint, dead-ending
+ * plain-HTTP ones (web:80).
+ *
+ * Returns true when the emitted TLS config requests this domain's wildcard
+ * certificate (main=domain, sans includes *.domain) so the caller can skip the
+ * redundant wildcard cert-trigger router.
  */
 async function createTraefikService(
   service: Service,
   domain: Domain,
   globalConfig: GlobalTraefikConfig,
-  config: TraefikConfig
-): Promise<void> {
-  const serviceIdentifier = generateServiceIdentifier(service, domain);
+  config: TraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>,
+  usedIdentifiers: Set<string>,
+  ambiguous: ReadonlySet<string>,
+  resolveDomain: DomainResolver
+): Promise<boolean> {
+  let serviceIdentifier = generateServiceIdentifier(service, domain, ambiguous);
+  // Identifier collision (e.g. two services resolving to the same slug) —
+  // disambiguate instead of silently overwriting the first service's objects.
+  if (usedIdentifiers.has(serviceIdentifier)) {
+    serviceIdentifier = `${serviceIdentifier}-${service.id.slice(0, 8)}`;
+  }
+  usedIdentifiers.add(serviceIdentifier);
+
   const serviceName = `service-${serviceIdentifier}`;
-  const routerName = `router-${serviceIdentifier}`;
   const protocol = service.isHttps ? "https" : "http";
 
+  // Parse the stored rule tree once. A tree carrying its own Host rules is
+  // SELF-CONTAINED (the editor's native format): both the rule string and the
+  // hostname list come from the tree. A tree WITHOUT any Host rule is a legacy
+  // service whose host still lives in the subdomain/domain columns. Either
+  // way, the identifier/router names/TLS-mode logic stays driven by the
+  // (derived) legacy columns.
+  const matchRules = parseMatchRules(service.matchRules);
+  const selfContainedTree = treeHasHost(matchRules);
+
   // Get hostnames for this service
-  const hostnames = generateServiceHostnames(service, domain);
+  const hostnames = selfContainedTree
+    ? hostsInTree(matchRules, resolveDomain)
+    : generateServiceHostnames(service, domain);
   if (hostnames.length === 0) {
     console.warn(`Service ${service.id} has no valid hostnames, skipping`);
-    return;
+    return false;
+  }
+
+  // Build the router rule. Self-contained trees assemble entirely from the
+  // tree (resolver-aware) — the legacy columns' host is NOT injected. Legacy
+  // `custom` services (no structured matchers) keep the Host(a) || Host(b)
+  // form; everything else assembles the primary Host + structured matchers
+  // via the shared assembler (same as the UI preview).
+  const rule = selfContainedTree
+    ? assembleRuleFromTree(matchRules, resolveDomain)
+    : service.hostnameMode === "custom" && matchRules.length === 0
+      ? hostnames.map((hostname) => `Host(\`${hostname}\`)`).join(" || ")
+      : assembleRule(hostnames[0], matchRules);
+
+  // An empty argument (PathPrefix(``), a Host whose domain no longer exists…)
+  // makes Traefik reject the router or match nothing; the API validates new
+  // writes, but stored rows can still degrade (deleted domain). Skip rather
+  // than emit an invalid router — nothing is registered for this service yet.
+  if (!rule || rule.includes("``")) {
+    console.warn(
+      `Service ${service.id} has an empty matcher argument in its rule (${rule || "<empty>"}), skipping`
+    );
+    return false;
   }
 
   // Service configuration
@@ -306,35 +561,106 @@ async function createTraefikService(
 
   config.http.services[serviceName] = serviceConfig;
 
-  // Build middlewares
-  const middlewares = await buildServiceMiddlewares(service, domain, globalConfig, config);
+  // Build the middlewares array ONCE and reuse the exact same array for every
+  // emitted router — guarantees identical middlewares across all entrypoints.
+  const middlewares = await buildServiceMiddlewares(service, serviceIdentifier, globalConfig, config);
 
-  // Create router rule for multiple hostnames
-  const hostRules = hostnames.map(hostname => `Host(\`${hostname}\`)`).join(" || ");
-
-  // Determine certificate configuration
+  // Determine certificate configuration (uses the primary host + wildcard logic)
   const tlsConfig = determineTlsConfig(service, domain, hostnames);
 
-  // Determine which entrypoint to use (service-specific or default)
-  const entrypoint = service.entrypoint || globalConfig.defaultEntrypoint;
+  // Entrypoints: the array column (legacy single for pre-array rows), then the
+  // global default. An explicitly-empty array must NOT resurrect the legacy
+  // single — that's the "deselected entrypoint comes back" bug.
+  const epList = resolveServiceEntrypoints(service);
+  const entryPoints = epList.length
+    ? epList
+    : globalDefaultEntrypoints(globalConfig);
 
-  // Router configuration
-  const router: TraefikRouter = {
-    rule: hostRules,
-    service: serviceName,
-    ...(middlewares.length > 0 && { middlewares }),
-    ...(entrypoint && { entryPoints: [entrypoint] }),
-    tls: tlsConfig,
+  const emittedTls = emitServiceRouters(
+    config,
+    `router-${serviceIdentifier}`,
+    { rule, service: serviceName, middlewares },
+    tlsConfig,
+    entryPoints,
+    epTlsInfo
+  );
+
+  // Did this service's TLS config request the domain's wildcard certificate?
+  return (
+    emittedTls &&
+    !!tlsConfig?.domains?.some(
+      (d) => d.main === domain.domain && (d.sans || []).includes(`*.${domain.domain}`)
+    )
+  );
+}
+
+/**
+ * Emit the router(s) for a service: a single un-suffixed router for zero/one
+ * entrypoint, one `-<ep>`-suffixed router per entrypoint otherwise — always
+ * the identical rule/service/middlewares, tls only on TLS entrypoints so
+ * plain-HTTP entrypoints keep serving HTTP. Returns whether any emitted
+ * router carries the tls config.
+ *
+ * TLS gating differs by shape. The single-entrypoint router is the legacy
+ * shape (on main it ALWAYS carried `tls`), so it only drops tls on
+ * authoritative Traefik API info (default TLS / well-known port) — never on
+ * the entrypoint-name guess, which would silently take an "http-alt" or
+ * "web-internal" service off HTTPS. The multi-entrypoint fan-out is new and
+ * may use the full heuristic: there a wrong guess costs one entrypoint, while
+ * tls on a plain port dead-ends it.
+ */
+function emitServiceRouters(
+  config: TraefikConfig,
+  baseRouterName: string,
+  base: { rule: string; service: string; middlewares: string[] },
+  tlsConfig: TraefikRouter["tls"],
+  entryPoints: string[],
+  epTlsInfo: Map<string, EntrypointTlsInfo>
+): boolean {
+  const shared = {
+    rule: base.rule,
+    service: base.service,
+    ...(base.middlewares.length > 0 && { middlewares: base.middlewares }),
   };
-  config.http.routers[routerName] = router;
+
+  if (entryPoints.length === 0) {
+    // Legacy: no entrypoints anywhere — single router bound to all, tls always set.
+    config.http.routers[baseRouterName] = { ...shared, tls: tlsConfig };
+    return true;
+  }
+
+  if (entryPoints.length === 1) {
+    const ep = entryPoints[0];
+    const tls = entrypointTlsFromApi(epTlsInfo.get(ep)) ?? true;
+    config.http.routers[baseRouterName] = {
+      ...shared,
+      entryPoints: [ep],
+      ...(tls && { tls: tlsConfig }),
+    };
+    return tls;
+  }
+
+  let emittedTls = false;
+  for (const ep of entryPoints) {
+    const tls = isTlsEntrypoint(ep, epTlsInfo.get(ep));
+    const name = `${baseRouterName}-${slugifyEntrypoint(ep)}`;
+    config.http.routers[name] = {
+      ...shared,
+      entryPoints: [ep],
+      ...(tls && { tls: tlsConfig }),
+    };
+    if (tls) emittedTls = true;
+  }
+  return emittedTls;
 }
 
 /**
  * Determine TLS configuration for a service based on hostname mode and certificate configs
  */
 function determineTlsConfig(service: Service, domain: Domain, hostnames: string[]): TraefikRouter['tls'] {
-  // If domain uses wildcard certificates and service is in subdomain mode, use wildcard
-  if (domain.useWildcardCert && service.hostnameMode === 'subdomain') {
+  // If the domain uses wildcard certificates, subdomain AND apex services share
+  // the wildcard cert (apex requests main=domain, sans=[*.domain]).
+  if (domain.useWildcardCert && (service.hostnameMode === 'subdomain' || service.hostnameMode === 'apex')) {
     return {
       certResolver: domain.certResolver,
       domains: [
@@ -380,12 +706,13 @@ function determineTlsConfig(service: Service, domain: Domain, hostnames: string[
 function createWildcardCertTrigger(
   domain: Domain,
   globalConfig: GlobalTraefikConfig,
-  config: TraefikConfig
+  config: TraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
 ): void {
   // Create unique names for this domain
   const domainSafe = domain.domain.replace(/\./g, '-');
   const wildcardServiceName = `wildcard-cert-trigger-${domainSafe}`;
-  const wildcardRouterName = `wildcard-cert-router-${domainSafe}`;
+  const wildcardRouterName = wildcardCertRouterName(domain);
   const replacePathMiddlewareName = `wildcard-replace-path-${domainSafe}`;
 
   // Create middleware to replace any path with the whitepage endpoint
@@ -400,7 +727,7 @@ function createWildcardCertTrigger(
     loadBalancer: {
       servers: [
         {
-          url: `http://${globalConfig.adminPanelDomain}`,
+          url: panelInternalUrl(globalConfig.adminPanelDomain),
         },
       ],
     },
@@ -417,12 +744,15 @@ function createWildcardCertTrigger(
   // Add path replacement middleware
   wildcardMiddlewares.push(replacePathMiddlewareName);
 
-  // Create router for the base domain to trigger wildcard cert generation
+  // Create router for the base domain to trigger wildcard cert generation.
+  // Path-scoped so it can never steal real traffic from a service (e.g. an
+  // apex service) whose rule matches the same Host().
+  const wildcardEntryPoints = tlsDefaultEntrypoints(globalConfig, epTlsInfo);
   const wildcardRouter: TraefikRouter = {
-    rule: `Host(\`${domain.domain}\`)`,
+    rule: `(Host(\`${domain.domain}\`)) && Path(\`${CERT_TRIGGER_PATH}\`)`,
     service: wildcardServiceName,
     ...(wildcardMiddlewares.length > 0 && { middlewares: wildcardMiddlewares }),
-    ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+    ...(wildcardEntryPoints.length > 0 && { entryPoints: wildcardEntryPoints }),
     tls: {
       certResolver: domain.certResolver,
       domains: [
@@ -442,15 +772,18 @@ function createWildcardCertTrigger(
 function createCertificateConfigTriggers(
   domain: Domain,
   globalConfig: GlobalTraefikConfig,
-  config: TraefikConfig
+  config: TraefikConfig,
+  epTlsInfo: Map<string, EntrypointTlsInfo>
 ): void {
   const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
+  const certRouterNames = certTriggerRouterNames(domain);
+  const triggerEntryPoints = tlsDefaultEntrypoints(globalConfig, epTlsInfo);
 
-  for (const certConfig of certificateConfigs) {
+  for (const [index, certConfig] of certificateConfigs.entries()) {
     // Create unique names for this certificate config
     const certConfigSafe = `${certConfig.name.replace(/[^a-zA-Z0-9]/g, '-')}-${certConfig.main.replace(/\./g, '-')}`;
     const certServiceName = `cert-trigger-${certConfigSafe}`;
-    const certRouterName = `cert-router-${certConfigSafe}`;
+    const certRouterName = certRouterNames[index];
     const replacePathMiddlewareName = `cert-replace-path-${certConfigSafe}`;
 
     // Create middleware to replace any path with the whitepage endpoint
@@ -465,7 +798,7 @@ function createCertificateConfigTriggers(
       loadBalancer: {
         servers: [
           {
-            url: `http://${globalConfig.adminPanelDomain}`,
+            url: panelInternalUrl(globalConfig.adminPanelDomain),
           },
         ],
       },
@@ -482,16 +815,18 @@ function createCertificateConfigTriggers(
     // Add path replacement middleware
     certMiddlewares.push(replacePathMiddlewareName);
 
-    // Create host rules for all domains covered by this certificate
+    // Create host rules for all domains covered by this certificate.
+    // The Host() disjunction MUST be parenthesized (Traefik's && binds tighter
+    // than ||) and the rule is Path-scoped so it never steals real traffic.
     const certDomains = [certConfig.main, ...(certConfig.sans || [])];
     const hostRules = certDomains.map(hostname => `Host(\`${hostname}\`)`).join(" || ");
 
     // Create router for the certificate domains to trigger cert generation
     const certRouter: TraefikRouter = {
-      rule: hostRules,
+      rule: `(${hostRules}) && Path(\`${CERT_TRIGGER_PATH}\`)`,
       service: certServiceName,
       ...(certMiddlewares.length > 0 && { middlewares: certMiddlewares }),
-      ...(globalConfig.defaultEntrypoint && { entryPoints: [globalConfig.defaultEntrypoint] }),
+      ...(triggerEntryPoints.length > 0 && { entryPoints: triggerEntryPoints }),
       tls: {
         certResolver: certConfig.certResolver,
         domains: [
@@ -507,23 +842,121 @@ function createCertificateConfigTriggers(
 }
 
 /**
+ * Managed mode only: expose the admin panel itself through Traefik. The
+ * HTTPS-only router follows the running default entrypoints and carries a basicAuth
+ * middleware built from ADMIN_PANEL_AUTH (htpasswd entries) — the bundle
+ * publishes no panel port, so this route is the only way in. Forward-auth is
+ * unaffected: Traefik calls the verify endpoint directly at the internal
+ * panel URL, never through this router.
+ */
+function createAdminPanelRoute(
+  globalConfig: GlobalTraefikConfig,
+  managedCfg: ManagedStaticConfig,
+  allDomains: Domain[],
+  config: TraefikConfig
+): void {
+  const host = globalConfig.adminPanelDomain.replace(/:\d+$/, "").trim();
+  // A localhost/empty admin domain can't be routed publicly — nothing to emit.
+  if (!host || host === "localhost" || host.endsWith(".localhost")) return;
+  // No collision check: user routers are `router-<id>`, services `service-<id>`,
+  // triggers `wildcard-cert-router-…` / `cert-router-…` — nothing else can
+  // claim the bare "admin-panel" keys.
+
+  config.http.services["admin-panel"] = {
+    loadBalancer: {
+      servers: [{ url: panelInternalUrl(globalConfig.adminPanelDomain) }],
+    },
+  };
+
+  // Never publish the panel without basicAuth: the compose bundle requires
+  // ADMIN_PANEL_AUTH, but a malformed value (no `user:hash` entry) would
+  // otherwise expose the whole panel on the public domain.
+  const users = parseAdminPanelAuthUsers(process.env.ADMIN_PANEL_AUTH);
+  if (users.length === 0) {
+    console.error(
+      "Managed mode: ADMIN_PANEL_AUTH has no valid htpasswd entries — " +
+        "refusing to publish the admin panel router without authentication"
+    );
+    delete config.http.services["admin-panel"];
+    return;
+  }
+  config.http.middlewares!["admin-panel-auth"] = { basicAuth: { users } };
+  const middlewares = ["admin-panel-auth"];
+
+  // Cert handling mirrors regular services: a managed domain match supplies
+  // the resolver (and wildcard block); otherwise the first managed resolver.
+  const matched = allDomains.find(
+    (d) => host === d.domain || host.endsWith("." + d.domain)
+  );
+  const certResolver = matched?.certResolver ?? managedCfg.certResolvers[0]?.name;
+  const tls: TraefikRouter["tls"] = {};
+  if (certResolver) tls.certResolver = certResolver;
+  if (matched?.useWildcardCert) {
+    tls.domains = [{ main: matched.domain, sans: [`*.${matched.domain}`] }];
+  }
+
+  config.http.routers["admin-panel"] = {
+    rule: `Host(\`${host}\`)`,
+    service: "admin-panel",
+    ...(middlewares.length > 0 && { middlewares }),
+    // Omit entryPoints so Traefik attaches this router to its actual default
+    // listeners, including after rollback or first-boot fallback. DB names
+    // may belong to a rejected config. The internal "traefik" listener is
+    // excluded by Traefik; explicit tls below keeps the panel HTTPS-only.
+    // Managed static configs intentionally do not set asDefault.
+    // Outrank any user service that claims the admin host with a longer rule:
+    // the panel is the bundle's only ingress, so it must never be shadowed by
+    // a user router (which would be another lockout with no port to fall on).
+    priority: 100000,
+    tls,
+  };
+}
+
+/**
  * Generate complete Traefik configuration
  */
 export async function generateTraefikConfig(): Promise<TraefikConfig> {
-  // Get enabled services with their domain information
-  const enabledServices = await db
+  // ALL services with their domain information: identifiers are named against
+  // the whole estate (an ambiguous subdomain is ambiguous whether or not its
+  // twin is enabled) so names don't flip on an enable toggle. Only enabled
+  // ones are emitted, sorted oldest-first by (createdAt, id) so identifier-
+  // collision suffixes are deterministic: the older service keeps the
+  // un-suffixed router/service names across runs.
+  const allServiceRows: ServiceDomainRow[] = await db
     .select({
       service: services,
       domain: domains,
     })
     .from(services)
-    .leftJoin(domains, eq(services.domainId, domains.id))
-    .where(eq(services.enabled, true));
+    .leftJoin(domains, eq(services.domainId, domains.id));
+  const ambiguous = ambiguousSubdomains(allServiceRows);
+  const enabledServices = allServiceRows
+    .filter((row) => row.service.enabled)
+    .sort((a, b) => {
+      const ta = a.service.createdAt?.getTime?.() ?? 0;
+      const tb = b.service.createdAt?.getTime?.() ?? 0;
+      return ta - tb || a.service.id.localeCompare(b.service.id);
+    });
 
   // Get all domains to ensure wildcard certificates are created even when no services are enabled
   const allDomains = await db.select().from(domains);
 
+  // Resolver for domain-backed Host rules inside self-contained matchRule
+  // trees: every known domain (all domains + the services' joined domains).
+  const domainNameById = new Map<string, string>();
+  for (const d of allDomains) {
+    domainNameById.set(d.id, d.domain);
+  }
+  for (const { domain } of enabledServices) {
+    if (domain) domainNameById.set(domain.id, domain.domain);
+  }
+  const resolveDomain: DomainResolver = (domainId) =>
+    domainNameById.get(domainId) ?? null;
+
   const globalConfig = await getGlobalConfig();
+
+  // Per-entrypoint TLS info (cached ~30s) — resolved once per generation.
+  const epTlsInfo = await resolveEntrypointTlsInfo();
 
   const config: TraefikConfig = {
     http: {
@@ -535,6 +968,11 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
 
   // Track unique domains for wildcard certificate generation
   const uniqueDomains = new Map<string, Domain>();
+  // Identifier collisions get a service-id suffix instead of overwriting.
+  const usedIdentifiers = new Set<string>();
+  // Domains whose wildcard cert is already requested by a service router —
+  // their wildcard trigger would be redundant (and used to steal apex traffic).
+  const wildcardSatisfiedDomains = new Set<string>();
 
   // Process each enabled service
   for (const item of enabledServices) {
@@ -546,7 +984,19 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
       continue;
     }
 
-    await createTraefikService(service, domain, globalConfig, config);
+    const requestedWildcard = await createTraefikService(
+      service,
+      domain,
+      globalConfig,
+      config,
+      epTlsInfo,
+      usedIdentifiers,
+      ambiguous,
+      resolveDomain
+    );
+    if (requestedWildcard) {
+      wildcardSatisfiedDomains.add(domain.id);
+    }
 
     // Track this domain for wildcard certificate generation
     uniqueDomains.set(domain.id, domain);
@@ -559,16 +1009,23 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
 
   // Add certificate triggers for all domains
   for (const domain of uniqueDomains.values()) {
-    // Add wildcard certificate triggers for domains that use wildcard certificates
-    if (domain.useWildcardCert) {
-      createWildcardCertTrigger(domain, globalConfig, config);
+    // Add wildcard certificate triggers for domains that use wildcard
+    // certificates — unless an enabled service already requests that wildcard.
+    if (domain.useWildcardCert && !wildcardSatisfiedDomains.has(domain.id)) {
+      createWildcardCertTrigger(domain, globalConfig, config, epTlsInfo);
     }
 
     // Add specific certificate configuration triggers
     const certificateConfigs = parseCertificateConfigs(domain.certificateConfigs);
     if (certificateConfigs.length > 0) {
-      createCertificateConfigTriggers(domain, globalConfig, config);
+      createCertificateConfigTriggers(domain, globalConfig, config, epTlsInfo);
     }
+  }
+
+  // Managed bundle: the panel itself is only reachable through Traefik.
+  if (isManagedMode()) {
+    const managedCfg = await getManagedStaticConfig();
+    createAdminPanelRoute(globalConfig, managedCfg, allDomains, config);
   }
 
   // Remove middlewares block if it's empty

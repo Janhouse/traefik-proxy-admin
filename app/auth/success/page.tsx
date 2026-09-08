@@ -15,11 +15,15 @@ export default function AuthSuccess() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="max-w-md w-full bg-card p-8 rounded-lg shadow text-center">
+      <div className="max-w-md w-full bg-card border rounded-[var(--radius-lg)] p-8 shadow-[var(--shadow-md)] text-center">
         <div className="mb-6">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div
+            className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ background: "var(--success-soft)" }}
+          >
             <svg
-              className="w-8 h-8 text-green-600"
+              className="w-8 h-8"
+              style={{ color: "var(--success)" }}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -39,7 +43,7 @@ export default function AuthSuccess() {
             You have been successfully authenticated and can now access the service.
           </p>
         </div>
-        
+
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             This window will close automatically in a few seconds.

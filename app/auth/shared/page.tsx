@@ -32,7 +32,7 @@ function SharedLinkAuthContent() {
       if (response.ok) {
         setSuccess(true);
         setMessage("Access granted! You can now access the service.");
-        
+
         // Redirect back or close window after a delay
         setTimeout(() => {
           window.close();
@@ -55,39 +55,51 @@ function SharedLinkAuthContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="max-w-md w-full bg-card p-8 rounded-lg shadow">
-        <h1 className="text-2xl font-bold text-center mb-6">
+      <div className="max-w-md w-full bg-card border rounded-[var(--radius-lg)] p-8 shadow-[var(--shadow-md)]">
+        <h1 className="text-2xl font-bold text-center text-foreground mb-6">
           Service Access
         </h1>
-        
+
         {loading && (
           <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p>Authenticating...</p>
+            <div
+              className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-4"
+              style={{ borderColor: "var(--brand)" }}
+            />
+            <p className="text-muted-foreground">Authenticating…</p>
           </div>
         )}
-        
+
         {!loading && message && (
-          <div className={`p-4 rounded-md mb-4 ${
-            success 
-              ? "bg-green-50 text-green-800 border border-green-200"
-              : "bg-red-50 text-red-800 border border-red-200"
-          }`}>
+          <div
+            className="p-4 rounded-[var(--radius-md)] mb-4 border text-sm"
+            style={
+              success
+                ? {
+                    background: "var(--success-soft)",
+                    borderColor: "color-mix(in oklab, var(--success) 35%, transparent)",
+                    color: "var(--success)",
+                  }
+                : {
+                    background: "var(--danger-soft)",
+                    borderColor: "color-mix(in oklab, var(--danger) 35%, transparent)",
+                    color: "var(--danger)",
+                  }
+            }
+          >
             {message}
           </div>
         )}
-        
+
         {!token && !loading && (
           <div className="text-center">
             <p className="text-muted-foreground mb-4">
               No authentication token found in the URL.
             </p>
-            <Button onClick={() => window.close()}>
-              Close Window
-            </Button>
+            <Button onClick={() => window.close()}>Close Window</Button>
           </div>
         )}
-        
+
         {success && (
           <div className="text-center">
             <p className="text-sm text-muted-foreground">
@@ -102,14 +114,19 @@ function SharedLinkAuthContent() {
 
 export default function SharedLinkAuth() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="max-w-md w-full bg-card p-8 rounded-lg shadow text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p>Loading...</p>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <div className="max-w-md w-full bg-card border rounded-[var(--radius-lg)] p-8 shadow-[var(--shadow-md)] text-center">
+            <div
+              className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-4"
+              style={{ borderColor: "var(--brand)" }}
+            />
+            <p className="text-muted-foreground">Loading…</p>
+          </div>
         </div>
-      </div>
-    }>
+      }
+    >
       <SharedLinkAuthContent />
     </Suspense>
   );

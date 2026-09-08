@@ -1,4 +1,4 @@
-CREATE TABLE "domains" (
+CREATE TABLE IF NOT EXISTS "domains" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(255) NOT NULL,
 	"domain" varchar(255) NOT NULL,
@@ -11,6 +11,10 @@ CREATE TABLE "domains" (
 	CONSTRAINT "domains_domain_unique" UNIQUE("domain")
 );
 --> statement-breakpoint
-ALTER TABLE "services" DROP CONSTRAINT "services_subdomain_unique";--> statement-breakpoint
-ALTER TABLE "services" ADD COLUMN "domain_id" uuid NOT NULL;--> statement-breakpoint
-ALTER TABLE "services" ADD CONSTRAINT "services_domain_id_domains_id_fk" FOREIGN KEY ("domain_id") REFERENCES "public"."domains"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "services" DROP CONSTRAINT IF EXISTS "services_subdomain_unique";--> statement-breakpoint
+ALTER TABLE "services" ADD COLUMN IF NOT EXISTS "domain_id" uuid NOT NULL;--> statement-breakpoint
+DO $$ BEGIN
+	ALTER TABLE "services" ADD CONSTRAINT "services_domain_id_domains_id_fk" FOREIGN KEY ("domain_id") REFERENCES "public"."domains"("id") ON DELETE restrict ON UPDATE no action;
+EXCEPTION
+	WHEN duplicate_object THEN null;
+END $$;

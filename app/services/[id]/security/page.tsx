@@ -2,10 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ArrowLeft, Shield } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { AppLayout } from "@/components/app-layout";
+import { PageBand, PageMain } from "@/components/page-band";
 import { ServiceSecurityList } from "@/components/service-security-list";
+import { StatusBadge, MetaBadge } from "@/components/traefik/status-badge";
+import {
+  primaryHostname,
+  publicUrl,
+  targetAddress,
+  serviceEntrypoints,
+} from "@/lib/service-display";
 import { useServices } from "@/hooks/use-services";
 import type { Service } from "@/components/service-table";
 
@@ -44,22 +50,14 @@ export default function ServiceSecurityPage() {
   if (loading) {
     return (
       <AppLayout>
-        <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.back()}
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold">Loading...</h1>
-              <p className="text-muted-foreground">Loading service security configuration</p>
-            </div>
-          </div>
-        </div>
+        <PageBand
+          eyebrow="Security"
+          title="Loading…"
+          subtitle="Loading service security configuration"
+          backHref="/services"
+          backLabel="Back to Services"
+        />
+        <PageMain />
       </AppLayout>
     );
   }
@@ -67,74 +65,86 @@ export default function ServiceSecurityPage() {
   if (!service) {
     return (
       <AppLayout>
-        <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.push("/services")}
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Services
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold">Service Not Found</h1>
-              <p className="text-muted-foreground">The requested service could not be found</p>
-            </div>
-          </div>
-        </div>
+        <PageBand
+          eyebrow="Security"
+          title="Service Not Found"
+          subtitle="The requested service could not be found"
+          backHref="/services"
+          backLabel="Back to Services"
+        />
+        <PageMain />
       </AppLayout>
     );
   }
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.back()}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <Shield className="h-8 w-8" />
-              Security Configuration
-            </h1>
-            <p className="text-muted-foreground">
-              Manage authentication and access control for <strong>{service.name}</strong>
-            </p>
-          </div>
-        </div>
+      <PageBand
+        eyebrow="Security"
+        title={service.name}
+        subtitle={
+          <>
+            Authentication &amp; access control in front of{" "}
+            <span className="mono">{primaryHostname(service)}</span>. Each rule
+            maps to a Traefik middleware on this router.
+          </>
+        }
+        backHref="/services"
+        backLabel="Back to Services"
+      />
 
-        {/* Service Info Card */}
-        <div className="bg-muted/50 rounded-lg p-4 border">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-            <div>
-              <label className="text-muted-foreground font-medium">Service Name</label>
-              <p className="font-semibold">{service.name}</p>
+      <PageMain>
+        <div className="space-y-6">
+          {/* Service summary */}
+          <div className="sec-bar">
+            <div className="item">
+              <div className="k">Service</div>
+              <div className="v">
+                {service.name}
+                <StatusBadge enabled={service.enabled} />
+              </div>
             </div>
-            <div>
-              <label className="text-muted-foreground font-medium">URL</label>
-              <p className="font-mono">{service.subdomain}.{service.domain?.domain}</p>
+            <div className="item">
+              <div className="k">Public URL</div>
+              <div className="v mono">
+                {primaryHostname(service) ? (
+                  <a
+                    href={publicUrl(service)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[var(--brand-2)] hover:underline"
+                  >
+                    {primaryHostname(service)}
+                  </a>
+                ) : (
+                  "—"
+                )}
+              </div>
             </div>
-            <div>
-              <label className="text-muted-foreground font-medium">Target</label>
-              <p className="font-mono">{service.targetIp}:{service.targetPort}</p>
+            <div className="item">
+              <div className="k">Target</div>
+              <div className="v mono">{targetAddress(service)}</div>
+            </div>
+            <div className="item">
+              <div className="k">Entrypoint</div>
+              <div className="v">
+                {serviceEntrypoints(service).length ? (
+                  serviceEntrypoints(service).map((ep) => (
+                    <MetaBadge key={ep} variant="https">
+                      {ep}
+                    </MetaBadge>
+                  ))
+                ) : (
+                  <span className="text-[var(--meta)]">default</span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Security Configuration List */}
-        <ServiceSecurityList
-          serviceId={serviceId}
-          serviceName={service.name}
-        />
-      </div>
+          {/* Security Configuration List */}
+          <ServiceSecurityList serviceId={serviceId} serviceName={service.name} />
+        </div>
+      </PageMain>
     </AppLayout>
   );
 }

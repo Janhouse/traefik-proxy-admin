@@ -40,6 +40,118 @@ Can be used standalone but built in mind with Headscale and other VPN to expose 
                         └─────────────────┘
 ```
 
+## Deployment Modes
+
+There are two ways to run this panel:
+
+- **Externally-managed Traefik (default)** — you run and configure Traefik
+  yourself; the panel only supplies the *dynamic* configuration via Traefik's
+  HTTP provider. Everything below in [Quick Start](#quick-start) and
+  [Traefik Configuration](#traefik-configuration) describes this mode. It is
+  the most flexible and powerful option.
+- **Fully-managed Traefik** — a one-command docker compose bundle where the
+  panel also owns Traefik's *static* configuration (entrypoints, ACME
+  certificate resolvers) and Traefik restarts itself when you change them.
+  See [Fully-Managed Traefik Bundle](#fully-managed-traefik-bundle).
+
+## Fully-Managed Traefik Bundle
+
+The bundle (`docker-compose.managed.yml`) starts PostgreSQL, the admin panel
+and Traefik together with sane defaults: `web` (:80, redirecting to https),
+`websecure` (:443, default TLS) and a `letsencrypt` TLS-challenge resolver.
+
+```bash
+cp docker/managed/.env.example .env
+# set POSTGRES_PASSWORD, ADMIN_PANEL_AUTH (htpasswd entry), MANAGED_SECRETS_KEY
+# and ADMIN_PANEL_DOMAIN — see the comments in the file
+docker compose -f docker-compose.managed.yml up -d
+```
+
+How it works:
+
+- The panel serves Traefik's `traefik.yml` at `/api/traefik/static-config`.
+  A small wrapper script inside the Traefik container fetches it on boot,
+  polls it every 30 seconds, and **restarts Traefik automatically** when it
+  changes (static config cannot be hot-reloaded). The config page shows
+  whether Traefik has picked up the latest config yet.
+- **Rollback**: once Traefik has run a fetched config for ~20 s the wrapper
+  snapshots it as *last-good* under `/data/wrapper` on the Traefik volume
+  (the config only — credentials are never written to persistent storage). If Traefik exits before a newly
+  applied config reaches that grace period, the wrapper logs a loud warning,
+  restores last-good and restarts from it — and keeps ignoring that rejected
+  config until the panel serves a different one or a five-minute cooldown
+  expires (`RETRY_SECONDS` on the wrapper), allowing transient startup failures
+  to recover automatically. Last-good is also used at
+  boot when the panel is unreachable (before falling back to a minimal
+  built-in config). Saves are validated server-side (types, known fields
+  only, ACME email format, known lego DNS provider codes with a custom
+  escape hatch, a TLS-enabled listener on container port 443 with no redirect), so
+  the rollback is the safety net, not the first line of defense.
+- **Admin access**: container port 443 must remain a TLS listener because the
+  supplied compose publishes only 80/443. Extra listeners are allowed, but
+  moving the only TLS listener to 8443 is rejected. Plain HTTP-only managed
+  configurations are unsupported, including behind an upstream TLS terminator.
+  The admin router remains HTTPS-only and authenticated on Traefik's default
+  listeners, following the running configuration even after entrypoint renames
+  and rollback. Its high priority reserves the entire admin hostname: user
+  services must use another hostname, including services with path rules.
+  The minimal recovery config has no certificate resolver, so recovery HTTPS
+  uses Traefik's default self-signed certificate and shows a browser warning.
+  The config page flags a missing heartbeat after 90 seconds (three default
+  wrapper polls); adjust this threshold if you customise the polling interval.
+- Entrypoints and certificate resolvers are edited in the **Managed Traefik**
+  section on the config page. DNS-challenge resolvers also need their provider
+  credentials (e.g. `CF_DNS_API_TOKEN` for Cloudflare); set them right there
+  under **DNS provider credentials** — any number of them, for one or several
+  resolvers/providers. Credentials are **write-only**: they can be set or
+  replaced through the web but are never returned, and there is **no HTTP
+  endpoint that serves them** — not to the wrapper, not to anyone. Values are
+  stored **encrypted at rest** in a file on the panel volume (AES-256-GCM with
+  the envelope header bound as authenticated data, keyed by
+  `MANAGED_SECRETS_KEY`, at least 32 characters) — never in the database,
+  which keeps only the names. To hand them to Traefik the panel decrypts them
+  and writes a shell-sourceable env file (mode 0600) onto the `managed_secrets`
+  volume, which compose backs with a **tmpfs** and mounts read-only into the
+  Traefik container: the plaintext exists in RAM only, never on disk and never
+  on the network. The wrapper polls that file, injects the variables as env,
+  and restarts Traefik when they change (within its 30 s poll). After a host
+  reboot the tmpfs is empty until the panel rewrites it on startup. The
+  managed status reports `secretsEnv: { materialized, writtenAt, stale }`.
+  You can still hard-code credentials as env vars on the `traefik` service
+  instead, if you prefer.
+- **Rotating `MANAGED_SECRETS_KEY`** makes the stored credentials
+  unreadable — they are gone, not recoverable. The managed status then
+  reports `secretsUndecryptable: true`; saving credentials again with
+  `reset: true` (or removing every stored name) discards the old file and
+  starts fresh, after which you re-enter the values. Credential files written
+  by pre-release builds (format v1, no authenticated header) are treated the
+  same way.
+- **Security model**: only ports 80/443 are published. The panel (3000) and
+  the Traefik API (8080) stay on the internal compose network; the panel is
+  reachable only through an auto-generated Traefik route on your
+  *Admin Panel Domain*, protected by HTTP basic auth from `ADMIN_PANEL_AUTH`
+  (required — the bundle refuses to start without it). The wrapper fetches
+  the **static config** (no secrets in it) over plain HTTP inside the compose
+  network; **credentials never travel over the network** — they move through
+  the in-memory `managed_secrets` volume only, and the wrapper's working copy
+  lives on a `tmpfs` (`/run`) in the Traefik container.
+
+First-time setup:
+
+1. In `.env` set `ADMIN_PANEL_DOMAIN` to the DNS name you will use for the
+   panel (e.g. `admin.example.com`) and point that record at the host. In
+   managed mode the panel seeds its *Admin Panel Domain* from this variable
+   on first start — only while the stored value is still the default; a
+   domain set later in the UI always wins.
+2. `docker compose -f docker-compose.managed.yml up -d`. Traefik starts with
+   built-in defaults, fetches the managed config and publishes the admin
+   route; the panel becomes available at `https://admin.example.com` behind
+   the basic-auth prompt within about a minute (the first certificate
+   issuance takes a moment).
+3. On the **Configuration** page set your ACME email in the **Managed
+   Traefik** section (and any DNS-provider credentials). Traefik restarts
+   within ~30 seconds.
+
 ## Quick Start
 
 ### 1. Clone and Install Dependencies

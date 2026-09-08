@@ -1,16 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
+import { PageBand, PageMain } from "@/components/page-band";
 import { ServiceForm } from "@/components/service-form";
 import { useServices } from "@/hooks/use-services";
+import { useConfig } from "@/lib/hooks/use-config";
 import { useRouter } from "next/navigation";
+import { toast } from "@/components/toaster";
 import type { ServiceFormData } from "@/hooks/use-service-form";
 
 export default function AddServicePage() {
-  const { saveService, defaultDuration } = useServices();
+  const { saveService } = useServices();
+  // The auto-disable default comes from the global config (null = never).
+  const { config, isLoading: configLoading } = useConfig();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
 
@@ -18,45 +21,36 @@ export default function AddServicePage() {
     setSaving(true);
     try {
       await saveService(serviceData, null);
-      router.push("/");
+      toast("Service created");
+      router.push("/services");
     } catch (error) {
       console.error("Failed to save service:", error);
+      toast("Failed to create service", "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleCancel = () => {
-    router.push("/");
-  };
-
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            onClick={handleCancel}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Services
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold">Add Service</h1>
-            <p className="text-muted-foreground">
-              Create a new Traefik proxy service
-            </p>
-          </div>
-        </div>
-
+      <PageBand
+        eyebrow="New"
+        title="Add Service"
+        subtitle="Create a new Traefik proxy route."
+        backHref="/services"
+        backLabel="Back to Services"
+      />
+      <PageMain>
         <ServiceForm
           service={null}
-          defaultDuration={defaultDuration}
+          defaultDuration={
+            configLoading ? undefined : config.defaultEnableDurationMinutes
+          }
           onSubmit={handleSubmit}
-          onCancel={handleCancel}
+          onCancel={() => router.push("/services")}
           submitting={saving}
         />
-      </div>
+      </PageMain>
     </AppLayout>
   );
 }

@@ -1,0 +1,276 @@
+// @vitest-environment jsdom
+/* Managed-Traefik section: hidden outside managed mode, applied/pending
+ * status chips, row edits flowing into the PUT body via its own Save. */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type {
+  ManagedModeResponse,
+  ManagedStaticConfig,
+} from "@/lib/managed-traefik-types";
+
+const toastMock = vi.hoisted(() => vi.fn());
+vi.mock("@/components/toaster", () => ({ toast: toastMock }));
+
+// CertResolverSelect fetches via its own hook — stub it to a plain input.
+vi.mock("@/components/traefik/cert-resolver-select", () => ({
+  CertResolverSelect: ({
+    value,
+    onChange,
+    id,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    id?: string;
+  }) => (
+    <input
+      id={id}
+      aria-label="resolver"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  ),
+}));
+
+import { ManagedStaticSection } from "@/components/managed/managed-static-section";
+
+const baseConfig: ManagedStaticConfig = {
+  entrypoints: [
+    { name: "web", port: 80, redirectToEntrypoint: "websecure" },
+    { name: "websecure", port: 443, tls: { enabled: true, certResolver: "letsencrypt" } },
+  ],
+  certResolvers: [
+    { name: "letsencrypt", email: "a@b.c", challenge: "tlsChallenge" },
+  ],
+  logLevel: "INFO",
+};
+
+function managedResponse(over: Partial<ManagedModeResponse> = {}): ManagedModeResponse {
+  return {
+    managed: true,
+    adminAuthConfigured: true,
+    config: baseConfig,
+    secretNames: [],
+    status: {
+      currentHash: "h1",
+      lastAppliedHash: "h1",
+      lastFetchedAt: new Date().toISOString(),
+      pending: false,
+      rejected: false,
+    },
+    ...over,
+  };
+}
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function stubFetch(getResponse: ManagedModeResponse) {
+  fetchMock = vi.fn(async (url: string, init?: RequestInit) => ({
+    ok: true,
+    json: async () =>
+      init?.method === "PUT" ? managedResponse() : getResponse,
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+beforeEach(() => toastMock.mockClear());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("ManagedStaticSection", () => {
+  it("renders nothing when managed mode is off", async () => {
+    stubFetch(
+      managedResponse({ managed: false, config: null, status: null })
+    );
+    const { container } = render(<ManagedStaticSection />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("shows the applied chip when Traefik runs the current config", async () => {
+    stubFetch(managedResponse());
+    render(<ManagedStaticSection />);
+    expect(await screen.findByText(/Applied — config proven/)).toBeDefined();
+  });
+
+  it("expires the applied heartbeat even when subsequent panel polls fail", async () => {
+    vi.useFakeTimers();
+    try {
+      stubFetch(managedResponse());
+      render(<ManagedStaticSection />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText(/Applied — config proven/)).toBeDefined();
+      fetchMock.mockRejectedValue(new Error("offline"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(100_000); });
+      expect(screen.getByText(/Traefik heartbeat is stale/)).toBeDefined();
+      expect(screen.queryByText(/Applied — config proven/)).toBeNull();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the pending chip while Traefik runs an older config", async () => {
+    stubFetch(
+      managedResponse({
+        status: {
+          currentHash: "h2",
+          lastAppliedHash: "h1",
+          lastFetchedAt: new Date().toISOString(),
+          pending: true,
+          rejected: false,
+        },
+      })
+    );
+    render(<ManagedStaticSection />);
+    expect(await screen.findByText(/Waiting for Traefik restart/)).toBeDefined();
+  });
+
+  it("shows the rejected chip when Traefik rolled back from the current config", async () => {
+    stubFetch(
+      managedResponse({
+        status: {
+          currentHash: "h2",
+          lastAppliedHash: "h1",
+          lastFetchedAt: new Date().toISOString(),
+          pending: true,
+          rejected: true,
+        },
+      })
+    );
+    render(<ManagedStaticSection />);
+    expect(
+      await screen.findByText(/Traefik rejected this config and rolled back/)
+    ).toBeDefined();
+  });
+
+  it("warns when ADMIN_PANEL_AUTH is missing", async () => {
+    stubFetch(managedResponse({ adminAuthConfigured: false }));
+    render(<ManagedStaticSection />);
+    expect(
+      await screen.findByText(/ADMIN_PANEL_AUTH is not set/)
+    ).toBeDefined();
+  });
+
+  it("edits flow into the PUT body and enable Save", async () => {
+    const user = userEvent.setup();
+    stubFetch(managedResponse());
+    render(<ManagedStaticSection />);
+
+    const port = await screen.findByLabelText("Port", {
+      selector: "#ep-port-1",
+    });
+    const save = screen.getByRole("button", { name: /Save Managed Config/ });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+
+    await user.clear(port);
+    await user.type(port, "8443");
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+
+    await user.click(save);
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find((c) => c[1]?.method === "PUT");
+      expect(put).toBeDefined();
+      const body = JSON.parse(String(put![1]!.body)) as ManagedStaticConfig;
+      expect(body.entrypoints[1].port).toBe(8443);
+    });
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining("Managed Traefik config saved")
+    );
+  });
+
+  it("surfaces validation errors from a rejected save", async () => {
+    const user = userEvent.setup();
+    fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? {
+            ok: false,
+            status: 400,
+            json: async () => ({ errors: ["Duplicate entrypoint name \"web\"."] }),
+          }
+        : { ok: true, json: async () => managedResponse() }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ManagedStaticSection />);
+
+    const name = await screen.findByLabelText("Name", {
+      selector: "#ep-name-1",
+    });
+    await user.clear(name);
+    await user.type(name, "web");
+    await user.click(screen.getByRole("button", { name: /Save Managed Config/ }));
+
+    expect(
+      await screen.findByText(/Duplicate entrypoint name/)
+    ).toBeDefined();
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining("rejected"),
+      "error"
+    );
+  });
+
+  it("removing an entrypoint row updates the config", async () => {
+    const user = userEvent.setup();
+    stubFetch(managedResponse());
+    render(<ManagedStaticSection />);
+
+    await screen.findByText(/Applied/);
+    await user.click(
+      screen.getByRole("button", { name: "Remove entrypoint web" })
+    );
+    await user.click(screen.getByRole("button", { name: /Save Managed Config/ }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find((c) => c[1]?.method === "PUT");
+      const body = JSON.parse(String(put![1]!.body)) as ManagedStaticConfig;
+      expect(body.entrypoints.map((e) => e.name)).toEqual(["websecure"]);
+    });
+  });
+
+  it("deletes credentials even when the static config is rejected", async () => {
+    const user = userEvent.setup();
+    // Credential removal must NOT be blocked by an invalid/rejected config.
+    let names = ["CF_DNS_API_TOKEN"];
+    const fm = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT" && url.includes("/secrets")) {
+        names = [];
+        return { ok: true, json: async () => ({ secretNames: [] }) };
+      }
+      if (init?.method === "PUT") {
+        return { ok: false, status: 400, json: async () => ({ errors: ["Bad config"] }) };
+      }
+      return { ok: true, json: async () => managedResponse({ secretNames: names }) };
+    });
+    vi.stubGlobal("fetch", fm);
+    render(<ManagedStaticSection />);
+
+    // mark the stored credential for removal
+    await user.click(
+      await screen.findByRole("button", { name: "Remove credential CF_DNS_API_TOKEN" })
+    );
+    // make the config dirty so a (rejected) config PUT is also attempted
+    const port = await screen.findByLabelText("Port", { selector: "#ep-port-1" });
+    await user.clear(port);
+    await user.type(port, "8443");
+
+    await user.click(screen.getByRole("button", { name: /Save Managed Config/ }));
+
+    await waitFor(() => {
+      const secretsPut = fm.mock.calls.find(
+        (c) => c[1]?.method === "PUT" && String(c[0]).includes("/secrets")
+      );
+      expect(secretsPut).toBeDefined();
+      expect(JSON.parse(String(secretsPut![1]!.body)).remove).toContain("CF_DNS_API_TOKEN");
+    });
+    // config error surfaced…
+    expect(await screen.findByText("Bad config")).toBeDefined();
+    // …yet the credential removal took effect (row is gone after refresh)
+    await waitFor(() => expect(screen.queryByText("CF_DNS_API_TOKEN")).toBeNull());
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining("Credentials saved"),
+      "error"
+    );
+  });
+});
