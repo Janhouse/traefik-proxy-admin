@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DomainService } from "@/lib/services/domain.service";
+import { isValidEdgeInput, normalizeEdge } from "@/lib/edge";
 import type { UpdateDomainRequest, UpdateDomainData } from "@/lib/dto/domain.dto";
 
 export async function GET(
@@ -34,6 +35,12 @@ export async function PUT(
   try {
     const { id } = await params;
     const body: UpdateDomainRequest = await request.json();
+    if (!isValidEdgeInput(body.edge)) {
+      return NextResponse.json(
+        { error: "Edge must be a lowercase name (letters, digits, dashes)" },
+        { status: 400 }
+      );
+    }
 
     const updateData: UpdateDomainData = {
       name: body.name,
@@ -43,6 +50,7 @@ export async function PUT(
       certResolver: body.certResolver || "letsencrypt",
       certificateConfigs: body.certificateConfigs ? JSON.stringify(body.certificateConfigs) : null,
       isDefault: body.isDefault ?? false,
+      edge: normalizeEdge(body.edge),
     };
 
     const domain = await DomainService.updateDomain(id, updateData);

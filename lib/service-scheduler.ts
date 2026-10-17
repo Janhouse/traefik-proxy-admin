@@ -1,7 +1,8 @@
 import "server-only";
 import { db, services } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getGlobalConfig } from "./app-config";
+import { sweepExpiredShares } from "./harness/sweeper";
 
 class ServiceScheduler {
   private interval: NodeJS.Timeout | null = null;
@@ -50,6 +51,11 @@ class ServiceScheduler {
     } catch (error) {
       console.error("Error in scheduler checking expired services:", error);
     }
+    try {
+      await sweepExpiredShares();
+    } catch (error) {
+      console.error("Error in scheduler sweeping expired shares:", error);
+    }
   }
 
   isActive() {
@@ -68,7 +74,10 @@ export async function checkAndDisableExpiredServices(): Promise<number> {
     const allEnabledServices = await db
       .select()
       .from(services)
-      .where(eq(services.enabled, true));
+      // API-created entries carry their own hard expiry (expiresAt) and are
+      // removed by sweepExpiredShares — the enable-duration default must not
+      // silently disable them.
+      .where(and(eq(services.enabled, true), isNull(services.ownerTag)));
 
     let disabledCount = 0;
 

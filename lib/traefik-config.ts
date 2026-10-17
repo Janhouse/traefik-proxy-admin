@@ -32,6 +32,7 @@ import { ServiceSecurityService } from "./services/service-security.service";
 import { TRAEFIK_SESSION_COOKIE } from "./constants";
 import type { Service, Domain } from "@/lib/db/schema";
 import type { CertificateConfig } from "@/lib/dto/domain.dto";
+import { normalizeEdge } from "@/lib/edge";
 
 export interface TraefikService {
   loadBalancer: {
@@ -912,10 +913,36 @@ function createAdminPanelRoute(
   };
 }
 
+/** True when a service must not be routed any more (hard expiry reached). */
+export function isServiceExpired(
+  service: Pick<Service, "expiresAt">,
+  now: Date = new Date()
+): boolean {
+  return !!service.expiresAt && service.expiresAt.getTime() <= now.getTime();
+}
+
+export interface GenerateTraefikConfigOptions {
+  /**
+   * Which Traefik instance is asking. null/undefined = the default edge: every
+   * domain without an `edge`. A name returns ONLY the domains assigned to that
+   * edge — so a domain on a named edge never appears in the default config.
+   * Global middlewares are applied on the default edge only (they name
+   * middlewares defined on that instance).
+   */
+  edge?: string | null;
+  now?: Date;
+}
+
 /**
  * Generate complete Traefik configuration
  */
-export async function generateTraefikConfig(): Promise<TraefikConfig> {
+export async function generateTraefikConfig(
+  options: GenerateTraefikConfigOptions = {}
+): Promise<TraefikConfig> {
+  const edge = normalizeEdge(options.edge);
+  const now = options.now ?? new Date();
+  const onEdge = (domain: Domain | null) =>
+    !!domain && normalizeEdge(domain.edge) === edge;
   // ALL services with their domain information: identifiers are named against
   // the whole estate (an ambiguous subdomain is ambiguous whether or not its
   // twin is enabled) so names don't flip on an enable toggle. Only enabled
@@ -931,7 +958,12 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     .leftJoin(domains, eq(services.domainId, domains.id));
   const ambiguous = ambiguousSubdomains(allServiceRows);
   const enabledServices = allServiceRows
-    .filter((row) => row.service.enabled)
+    .filter(
+      (row) =>
+        row.service.enabled &&
+        !isServiceExpired(row.service, now) &&
+        onEdge(row.domain)
+    )
     .sort((a, b) => {
       const ta = a.service.createdAt?.getTime?.() ?? 0;
       const tb = b.service.createdAt?.getTime?.() ?? 0;
@@ -953,7 +985,11 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
   const resolveDomain: DomainResolver = (domainId) =>
     domainNameById.get(domainId) ?? null;
 
-  const globalConfig = await getGlobalConfig();
+  const savedGlobalConfig = await getGlobalConfig();
+  const globalConfig: GlobalTraefikConfig =
+    edge === null
+      ? savedGlobalConfig
+      : { ...savedGlobalConfig, globalMiddlewares: [] };
 
   // Per-entrypoint TLS info (cached ~30s) — resolved once per generation.
   const epTlsInfo = await resolveEntrypointTlsInfo();
@@ -1002,9 +1038,10 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
     uniqueDomains.set(domain.id, domain);
   }
 
-  // Add ALL domains to ensure wildcard certificates are created even when no services are enabled
+  // Add ALL of this edge's domains to ensure wildcard certificates are created
+  // even when no services are enabled
   for (const domain of allDomains) {
-    uniqueDomains.set(domain.id, domain);
+    if (onEdge(domain)) uniqueDomains.set(domain.id, domain);
   }
 
   // Add certificate triggers for all domains
@@ -1023,7 +1060,7 @@ export async function generateTraefikConfig(): Promise<TraefikConfig> {
   }
 
   // Managed bundle: the panel itself is only reachable through Traefik.
-  if (isManagedMode()) {
+  if (isManagedMode() && edge === null) {
     const managedCfg = await getManagedStaticConfig();
     createAdminPanelRoute(globalConfig, managedCfg, allDomains, config);
   }

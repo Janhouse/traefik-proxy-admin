@@ -36,6 +36,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
     certResolver: "letsencrypt",
     certificateConfigs: [] as CertificateConfig[],
     isDefault: false,
+    edge: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
         certResolver: domain.certResolver,
         certificateConfigs: domain.parsedCertificateConfigs || [],
         isDefault: domain.isDefault,
+        edge: domain.edge ?? "",
       });
     } else {
       setFormData({
@@ -61,6 +63,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
         certResolver: "letsencrypt",
         certificateConfigs: [],
         isDefault: false,
+        edge: "",
       });
     }
   }, [domain]);
@@ -128,6 +131,7 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
         certResolver: formData.certResolver.trim() || "letsencrypt",
         certificateConfigs: formData.certificateConfigs,
         isDefault: formData.isDefault,
+        edge: formData.edge.trim().toLowerCase() || null,
       };
 
       await onSave(domainData);
@@ -198,6 +202,20 @@ export function DomainForm({ domain, onSave, onCancel }: DomainFormProps) {
                 onChange={(name) => handleChange("certResolver", name)}
                 required
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="edge">Traefik Edge</Label>
+              <Input
+                id="edge"
+                value={formData.edge}
+                onChange={(e) => handleChange("edge", e.target.value)}
+                placeholder="default"
+              />
+              <p className="text-[12px] text-[var(--meta)]">
+                Leave empty for the default Traefik. A name (e.g. <code>internal</code>) moves
+                this domain&apos;s routes to <code>/api/traefik/config?edge=&lt;name&gt;</code> only.
+              </p>
             </div>
 
             <div className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">

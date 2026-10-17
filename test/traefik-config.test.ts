@@ -96,6 +96,7 @@ const mkDomain = (over: Partial<Domain> = {}): Domain => ({
   certResolver: "letsencrypt",
   certificateConfigs: null,
   isDefault: true,
+  edge: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
   ...over,
@@ -120,6 +121,12 @@ const mkService = (over: Partial<Service> = {}): Service => ({
   enableDurationMinutes: null,
   middlewares: null,
   requestHeaders: null,
+  ownerTag: null,
+  createdByTokenId: null,
+  shareHostname: null,
+  shareAuthMode: null,
+  ownerLabels: null,
+  expiresAt: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
   ...over,
@@ -1112,5 +1119,73 @@ describe("generateTraefikConfig — cert triggers", () => {
 
     const config = await generateTraefikConfig();
     expect(config.http.routers["wildcard-cert-router-example-com"]).toBeUndefined();
+  });
+});
+
+/* ── Edges and hard expiry ─────────────────────────────────────────────────── */
+
+describe("generateTraefikConfig — edges", () => {
+  const pub = mkDomain({ id: "d-pub", domain: "e.example.com" });
+  const intra = mkDomain({ id: "d-int", domain: "i.example.com", edge: "internal", isDefault: false });
+  const pubSvc = mkService({ id: "aaaaaaaa-0000-0000-0000-000000000001", subdomain: "pubapp", domainId: "d-pub" });
+  const intraSvc = mkService({ id: "bbbbbbbb-0000-0000-0000-000000000002", subdomain: "intraapp", domainId: "d-int" });
+
+  beforeEach(() => {
+    h.state.joinRows = [
+      { service: pubSvc, domain: pub },
+      { service: intraSvc, domain: intra },
+    ];
+    h.state.allDomains = [pub, intra];
+    h.state.globalConfig.globalMiddlewares = ["hsts@file"];
+  });
+
+  it("the default config never contains a named edge's routes or cert triggers", async () => {
+    const config = await generateTraefikConfig();
+    const rules = Object.values(config.http.routers).map((r) => r.rule).join("\n");
+    expect(rules).toContain("pubapp.e.example.com");
+    expect(rules).not.toContain("i.example.com");
+    expect(config.http.routers["router-intraapp"]).toBeUndefined();
+  });
+
+  it("?edge=internal serves only that edge's domains, without global middlewares", async () => {
+    const config = await generateTraefikConfig({ edge: "internal" });
+    expect(Object.keys(config.http.routers)).toEqual(
+      expect.arrayContaining(["router-intraapp"])
+    );
+    const rules = Object.values(config.http.routers).map((r) => r.rule).join("\n");
+    expect(rules).not.toContain("e.example.com");
+    expect(config.http.routers["router-intraapp"].middlewares).toBeUndefined();
+    // The edge's own wildcard trigger is emitted only when no service requests it
+    expect(config.http.routers[wildcardCertRouterName(pub)]).toBeUndefined();
+  });
+
+  it("an unknown edge yields an empty config", async () => {
+    const config = await generateTraefikConfig({ edge: "nope" });
+    expect(config.http.routers).toEqual({});
+    expect(config.http.services).toEqual({});
+  });
+});
+
+describe("generateTraefikConfig — hard expiry", () => {
+  it("never routes a service whose expiresAt has passed", async () => {
+    const now = new Date("2030-01-01T00:00:00Z");
+    h.state.joinRows = [
+      {
+        service: mkService({ expiresAt: new Date("2029-12-31T23:59:59Z") }),
+        domain: mkDomain(),
+      },
+      {
+        service: mkService({
+          id: "22222222-0000-0000-0000-000000000000",
+          subdomain: "live",
+          expiresAt: new Date("2030-01-01T00:00:01Z"),
+        }),
+        domain: mkDomain(),
+      },
+    ];
+    h.state.allDomains = [mkDomain()];
+    const config = await generateTraefikConfig({ now });
+    expect(config.http.routers["router-app"]).toBeUndefined();
+    expect(config.http.routers["router-live"]).toBeDefined();
   });
 });

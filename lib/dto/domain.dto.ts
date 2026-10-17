@@ -17,6 +17,8 @@ export interface CreateDomainRequest {
   certResolver?: string;
   certificateConfigs?: CertificateConfig[];
   isDefault?: boolean;
+  /** Traefik edge serving this domain; empty/null = the default edge. */
+  edge?: string | null;
 }
 
 export interface UpdateDomainRequest {
@@ -27,6 +29,8 @@ export interface UpdateDomainRequest {
   certResolver?: string;
   certificateConfigs?: CertificateConfig[];
   isDefault?: boolean;
+  /** Traefik edge serving this domain; empty/null = the default edge. */
+  edge?: string | null;
 }
 
 // Response DTOs
@@ -44,6 +48,7 @@ export interface CreateDomainData {
   certResolver: string;
   certificateConfigs?: string | null; // JSON string
   isDefault: boolean;
+  edge?: string | null;
 }
 
 export interface UpdateDomainData {
@@ -54,4 +59,5 @@ export interface UpdateDomainData {
   certResolver: string;
   certificateConfigs?: string | null; // JSON string
   isDefault: boolean;
+  edge?: string | null;
 }

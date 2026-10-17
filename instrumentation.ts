@@ -39,4 +39,7 @@ export async function register() {
   }
   process.env["BUILD_ID"] = getBuildId();
   await runMigrations();
+  // Start the background schedulers (service auto-disable, expired-share
+  // sweeper, metrics) at boot rather than on the first API request.
+  await import("@/lib/startup");
 }
