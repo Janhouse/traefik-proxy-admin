@@ -6,8 +6,14 @@ import { materializeManagedSecrets } from "./managed-secrets-store";
 
 const RETRY_MS = 30_000;
 
-let isInitialized = false;
-let inFlight: Promise<void> | null = null;
+/**
+ * Process-wide init state. Next bundles instrumentation.ts and the route
+ * handlers separately, so this module can be instantiated more than once in
+ * one process; a module-level flag would start every scheduler twice (and the
+ * metrics scraper would then record each traffic delta twice).
+ */
+const state = ((globalThis as { __traefikAdminStartup?: { initialized: boolean; inFlight: Promise<void> | null } })
+  .__traefikAdminStartup ??= { initialized: false, inFlight: null });
 
 /**
  * Start the background schedulers exactly once. A failed attempt does NOT
@@ -15,10 +21,10 @@ let inFlight: Promise<void> | null = null;
  * callers share the in-flight attempt.
  */
 export async function initializeServices(): Promise<void> {
-  if (isInitialized) return;
-  if (inFlight) return inFlight;
+  if (state.initialized) return;
+  if (state.inFlight) return state.inFlight;
 
-  inFlight = (async () => {
+  state.inFlight = (async () => {
     console.log("Initializing application services...");
     try {
       // Start the service auto-disable scheduler
@@ -43,7 +49,7 @@ export async function initializeServices(): Promise<void> {
         }
       }
 
-      isInitialized = true;
+      state.initialized = true;
       console.log("Application services initialized successfully");
     } catch (error) {
       console.error(
@@ -55,10 +61,10 @@ export async function initializeServices(): Promise<void> {
       const t = setTimeout(() => void initializeServices(), RETRY_MS);
       t.unref?.();
     } finally {
-      inFlight = null;
+      state.inFlight = null;
     }
   })();
-  return inFlight;
+  return state.inFlight;
 }
 
 // Auto-initialize when this module is imported
