@@ -4,7 +4,7 @@ import { authenticateToken, createApiToken, type TokenPrincipal } from "@/lib/ha
 import type { ApiTokenScope } from "@/lib/harness/constants";
 
 /** Zones used by the harness tests: an intranet edge and a public one. */
-export const TEST_SETTINGS = {
+const TEST_SETTINGS = {
   zones: [
     {
       suffix: "i.example.com",

@@ -27,15 +27,6 @@ import type { TokenPrincipal } from "./tokens";
  * registered at all.
  */
 
-export const MCP_TOOL_NAMES = [
-  "whoami",
-  "list_shares",
-  "get_share",
-  "create_share",
-  "update_share_expiry",
-  "delete_share",
-] as const;
-
 const labelFields = {
   workspace: z.string().optional().describe("Workspace label"),
   resource: z.string().optional().describe("Resource label"),

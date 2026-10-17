@@ -18,7 +18,7 @@ const traefikNameList = z
   .array(z.string().trim().regex(TRAEFIK_NAME_RE, "invalid Traefik name"))
   .max(20);
 
-export interface HarnessZone {
+interface HarnessZone {
   /** Hostname suffix shares are created under, e.g. "e.example.com". A domain
    * with exactly this name must exist in the panel. */
   suffix: string;
@@ -37,7 +37,7 @@ export interface HarnessSettings {
   onlyMeMiddlewares: string[];
 }
 
-export const harnessZoneSchema = z.object({
+const harnessZoneSchema = z.object({
   suffix: z
     .string()
     .trim()

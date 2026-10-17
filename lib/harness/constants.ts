@@ -34,8 +34,7 @@ export const DEFAULT_OWNER_TAG = "harness";
 
 /** Labels a caller may attach to a share. */
 export const SHARE_LABEL_KEYS = ["workspace", "resource", "job"] as const;
-export type ShareLabelKey = (typeof SHARE_LABEL_KEYS)[number];
-export type ShareLabels = Partial<Record<ShareLabelKey, string>>;
+export type ShareLabels = Partial<Record<(typeof SHARE_LABEL_KEYS)[number], string>>;
 
 /** Owner tags / labels: short, URL- and log-safe. */
 export const OWNER_TAG_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;

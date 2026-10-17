@@ -30,7 +30,7 @@ import type { TokenPrincipal } from "./tokens";
 
 /* ── Errors ─────────────────────────────────────────────────────────────────── */
 
-export type HarnessErrorCode =
+type HarnessErrorCode =
   | "invalid_request"
   | "forbidden"
   | "not_found"
@@ -65,7 +65,7 @@ function invalid(error: z.ZodError): HarnessError {
   );
 }
 
-export function requireScope(principal: TokenPrincipal, scope: ApiTokenScope): void {
+function requireScope(principal: TokenPrincipal, scope: ApiTokenScope): void {
   if (!principal.scopes.includes(scope)) {
     throw new HarnessError("forbidden", `Token lacks the ${scope} scope`);
   }
@@ -80,7 +80,7 @@ const labelValue = z
   .max(128)
   .regex(/^[\x20-\x7e]+$/, "printable ASCII only");
 
-export const shareLabelsSchema = z
+const shareLabelsSchema = z
   .object(Object.fromEntries(SHARE_LABEL_KEYS.map((k) => [k, labelValue.optional()])) as Record<
     (typeof SHARE_LABEL_KEYS)[number],
     z.ZodOptional<typeof labelValue>
@@ -89,7 +89,7 @@ export const shareLabelsSchema = z
 
 const isoDateTime = z.iso.datetime({ offset: true });
 
-export const createShareSchema = z
+const createShareSchema = z
   .object({
     hostname: z
       .string()
@@ -104,19 +104,18 @@ export const createShareSchema = z
     labels: shareLabelsSchema.optional(),
   })
   .strict();
-export type CreateShareInput = z.input<typeof createShareSchema>;
 
-export const updateShareSchema = z
+const updateShareSchema = z
   .object({ expiresAt: isoDateTime.nullable() })
   .strict();
 
-export const listSharesSchema = shareLabelsSchema;
+const listSharesSchema = shareLabelsSchema;
 
 const shareIdSchema = z.guid();
 
 /* ── View ───────────────────────────────────────────────────────────────────── */
 
-export interface ShareView {
+interface ShareView {
   id: string;
   hostname: string;
   url: string;
@@ -153,7 +152,7 @@ function owned(principal: TokenPrincipal, ...extra: SQL[]): SQL {
 }
 
 /** Parse and restrict the upstream URL to scheme://host[:port][/]. */
-export function parseTargetUrl(raw: string): { host: string; port: number; https: boolean } {
+function parseTargetUrl(raw: string): { host: string; port: number; https: boolean } {
   let url: URL;
   try {
     url = new URL(raw);

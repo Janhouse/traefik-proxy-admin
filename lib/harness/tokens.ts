@@ -25,7 +25,7 @@ export interface TokenPrincipal {
 }
 
 /** A token as the admin UI sees it — never the hash. */
-export interface ApiTokenView {
+interface ApiTokenView {
   id: string;
   name: string;
   tokenPrefix: string;
@@ -36,7 +36,7 @@ export interface ApiTokenView {
   revokedAt: string | null;
 }
 
-export const createTokenSchema = z
+const createTokenSchema = z
   .object({
     name: z.string().trim().min(1).max(255),
     ownerTag: z
@@ -49,7 +49,7 @@ export const createTokenSchema = z
   })
   .strict();
 
-export function hashToken(token: string): string {
+function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
