@@ -60,12 +60,19 @@ This is a comprehensive admin panel for managing Traefik dynamic configurations 
 - **services**: Service configurations with auth methods and middleware settings
 - **shared_links**: Time-limited authentication links
 - **sessions**: Active user sessions with memory caching
-- **app_config**: Global application configuration
+- **app_config**: Global application configuration (also `harness_settings`)
+- **api_tokens**: Hashed bearer tokens (owner tag, scopes, revoke) for the harness API
 
 ## API Endpoints
 
 ### Traefik Integration
-- `GET /api/traefik/config` - Dynamic Traefik configuration endpoint
+- `GET /api/traefik/config` - Dynamic Traefik configuration endpoint (`?edge=<name>` for a named edge)
+
+### Harness Integration API (bearer token, see docs/harness-api.md)
+- `/api/harness/v1/*` REST and `/api/harness/mcp` MCP — both call `lib/harness/shares.ts`,
+  which filters EVERY query by the token's owner tag. Never add a harness code path
+  that queries `services` without that filter.
+- Admin-side endpoints live under `/api/admin/harness/*` (never under `/api/harness`).
 
 ### Service Management
 - `GET /api/services` - List all services

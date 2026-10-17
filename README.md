@@ -215,7 +215,14 @@ The admin panel will be available at `http://localhost:3000`
 ## API Endpoints
 
 ### Traefik Configuration
-- `GET /api/traefik/config` - Dynamic Traefik configuration
+- `GET /api/traefik/config` - Dynamic Traefik configuration (default edge)
+- `GET /api/traefik/config?edge=<name>` - Configuration for domains assigned to a named edge
+
+### Harness Integration (bearer token)
+- `GET /api/harness/v1/me` - Token identity, scopes and allowed zones
+- `GET|POST /api/harness/v1/shares` - List / create own shares
+- `GET|PATCH|DELETE /api/harness/v1/shares/[id]` - Read, change expiry, delete an own share
+- `POST /api/harness/mcp` - MCP (Streamable HTTP) with the same operations
 
 ### Service Management
 - `GET /api/services` - List all services
@@ -303,6 +310,22 @@ This configuration will:
 - Make services accessible as `{service}.exposed.example.com`
 - Use wildcard certificate `*.exposed.example.com`
 - Apply compression, security headers, and rate limiting to all services
+
+## Harness Integration API and MCP
+
+A token-scoped REST API (`/api/harness/v1`) and MCP server
+(`/api/harness/mcp`) let an automation publish its own services on hostnames
+under configured suffixes, with an access mode (`only-me` forward-auth,
+`network`, or `public` — which always needs an expiry). A token can **only**
+see and manage the entries its owner tag created; admin-created services are
+invisible to it. Expired shares stop routing immediately and are deleted by a
+sweeper. Tokens, zones and an overview of all API shares are on the **API**
+page. Domains can also be pinned to a named Traefik *edge*
+(`/api/traefik/config?edge=<name>`) so intranet-only hostnames never reach the
+public instance.
+
+See [docs/harness-api.md](docs/harness-api.md) for the full reference and
+deployment notes.
 
 ## Authentication Methods
 
