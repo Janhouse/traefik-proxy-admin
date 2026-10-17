@@ -78,6 +78,13 @@
       "when": 1780949168608,
       "tag": "0010_petite_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792262887793,
+      "tag": "0011_supreme_lightspeed",
+      "breakpoints": true
     }
   ]
 }

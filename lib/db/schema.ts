@@ -1,4 +1,5 @@
-import { pgTable, text, integer, boolean, timestamp, varchar, uuid, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, varchar, uuid, index, uniqueIndex, jsonb, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const basicAuthConfigs = pgTable("basic_auth_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -26,8 +27,32 @@ export const domains = pgTable("domains", {
   certResolver: varchar("cert_resolver", { length: 255 }).notNull().default("letsencrypt"),
   certificateConfigs: text("certificate_configs"), // JSON array of certificate configurations
   isDefault: boolean("is_default").default(false).notNull(),
+  // Which Traefik instance serves this domain. null = the default edge (the
+  // instance polling /api/traefik/config without ?edge=). A named edge is
+  // served ONLY by /api/traefik/config?edge=<name>, so e.g. intranet-only
+  // hostnames never reach the public Traefik.
+  edge: varchar("edge", { length: 64 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/**
+ * Bearer tokens for the harness integration API / MCP. Only a SHA-256 of the
+ * token is stored; the plaintext is shown once at creation. Every entry a
+ * token creates is tagged with the token's `ownerTag`, and the API can only
+ * ever see or touch entries carrying that tag (tokens sharing a tag share
+ * ownership, so a token can be rotated without orphaning its entries).
+ */
+export const apiTokens = pgTable("api_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 255 }).notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  tokenPrefix: varchar("token_prefix", { length: 16 }).notNull(),
+  ownerTag: varchar("owner_tag", { length: 64 }).notNull().default("harness"),
+  scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
 });
 
 export const services = pgTable("services", {
@@ -37,7 +62,7 @@ export const services = pgTable("services", {
   hostnameMode: varchar("hostname_mode", { length: 20 }).default("subdomain").notNull(), // 'subdomain', 'apex', 'custom'
   customHostnames: text("custom_hostnames"), // JSON array of hostnames when hostname_mode is 'custom'
   domainId: uuid("domain_id").references(() => domains.id, { onDelete: "restrict" }).notNull(),
-  targetIp: varchar("target_ip", { length: 45 }).notNull(),
+  targetIp: varchar("target_ip", { length: 255 }).notNull(), // IP or hostname
   targetPort: integer("target_port").notNull(),
   entrypoint: varchar("entrypoint", { length: 255 }), // legacy single entrypoint (kept for back-compat)
   entrypoints: text("entrypoints"), // JSON array of entrypoint names (preferred)
@@ -49,9 +74,27 @@ export const services = pgTable("services", {
   enableDurationMinutes: integer("enable_duration_minutes"), // null = forever, number = minutes until auto-disable
   middlewares: text("middlewares"), // JSON array of additional middlewares for this service
   requestHeaders: text("request_headers"), // JSON object of custom request headers to add/modify
+  // ── Ownership (harness integration API) ──────────────────────────────────
+  // null = created in the admin panel. Non-null = created through the token
+  // API by a token with this owner tag; the API can only see/modify rows with
+  // its own tag, never admin-created ones.
+  ownerTag: varchar("owner_tag", { length: 64 }),
+  createdByTokenId: uuid("created_by_token_id").references((): AnyPgColumn => apiTokens.id, { onDelete: "set null" }),
+  /** FQDN of an API-created share (unique among API-created entries). */
+  shareHostname: varchar("share_hostname", { length: 255 }),
+  /** only-me | network | public — the share's access mode. */
+  shareAuthMode: varchar("share_auth_mode", { length: 20 }),
+  /** Free-form labels (workspace, resource, job) set by the API caller. */
+  ownerLabels: jsonb("owner_labels").$type<Record<string, string>>(),
+  /** Hard expiry: never routed at/after this instant, then deleted by the sweeper. */
+  expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_services_owner_tag").on(t.ownerTag),
+  index("idx_services_expires_at").on(t.expiresAt),
+  uniqueIndex("uq_services_share_hostname").on(t.shareHostname).where(sql`${t.shareHostname} IS NOT NULL`),
+]);
 
 export const serviceSecurityConfigs = pgTable("service_security_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -138,5 +181,7 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type AppConfig = typeof appConfig.$inferSelect;
 export type NewAppConfig = typeof appConfig.$inferInsert;
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type NewApiToken = typeof apiTokens.$inferInsert;
 export type RouterMetricSample = typeof routerMetricSamples.$inferSelect;
 export type NewRouterMetricSample = typeof routerMetricSamples.$inferInsert;
