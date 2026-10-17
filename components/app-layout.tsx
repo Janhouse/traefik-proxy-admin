@@ -19,6 +19,7 @@ const NAV: { href: string; label: string; match: (p: string) => boolean }[] = [
   { href: "/runtime", label: "Runtime", match: (p) => p.startsWith("/runtime") },
   { href: "/security", label: "Security", match: (p) => p.startsWith("/security") },
   { href: "/sessions", label: "Sessions", match: (p) => p.startsWith("/sessions") },
+  { href: "/harness", label: "API", match: (p) => p.startsWith("/harness") },
   { href: "/config", label: "Config", match: (p) => p.startsWith("/config") },
 ];
 

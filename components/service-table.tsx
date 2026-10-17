@@ -68,6 +68,8 @@ export interface Service {
     certResolver: string;
     isDefault: boolean;
   };
+  /** Set when the entry was created through the harness token API. */
+  ownerTag?: string | null;
   hasSharedLink?: boolean;
   hasSso?: boolean;
   hasBasicAuth?: boolean;
@@ -285,6 +287,11 @@ export function ServiceTable({
                     {service.name}
                   </button>
                   <StatusBadge enabled={service.enabled} />
+                  {service.ownerTag && (
+                    <MetaBadge variant="info" title={`Created through the API (owner tag "${service.ownerTag}"); managed on the API page`}>
+                      API · {service.ownerTag}
+                    </MetaBadge>
+                  )}
                   {service.enabled && healthState === "down" && (
                     <MetaBadge variant="danger" withDot title="Backend health check failing">
                       Backend down
