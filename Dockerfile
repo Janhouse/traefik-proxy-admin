@@ -1,4 +1,4 @@
-FROM node:23-alpine AS base
+FROM node:24-alpine AS base
 RUN apk add --update --no-cache git wget \
   && rm -rf /var/cache/apk/*
 

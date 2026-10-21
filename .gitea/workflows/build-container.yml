@@ -23,7 +23,7 @@ jobs:
       - name: Build image
         env:
           REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
-        run: docker compose -f docker/docker-compose.build.yml build traefik-configurator
+        run: docker compose -f docker/docker-compose.build.yml build --pull traefik-configurator
       - name: Login to Gitea Container Registry
         uses: docker/login-action@v3
         with:
