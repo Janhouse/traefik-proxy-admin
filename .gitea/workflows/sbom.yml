@@ -75,36 +75,6 @@ jobs:
           echo "custom_tags=${CUSTOM_TAGS}" >> $GITHUB_OUTPUT
           echo "Resolved: pushed_to_github=${PUSHED_TO_GITHUB}, custom_tags=${CUSTOM_TAGS}"
 
-      - name: Cache tools
-        id: cache-tools
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/bin
-          key: sbom-tools-${{ runner.os }}-syft-v1.18.1-cyclonedx-v0.27.1
-
-      - name: Install Syft
-        if: steps.cache-tools.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/.local/bin
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ~/.local/bin v1.18.1
-
-      - name: Install CycloneDX CLI
-        if: steps.cache-tools.outputs.cache-hit != 'true'
-        run: |
-          curl -sSfL https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.27.1/cyclonedx-linux-x64 -o ~/.local/bin/cyclonedx-cli
-          chmod +x ~/.local/bin/cyclonedx-cli
-
-      - name: Add tools to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Generate SBOM for container (OS packages only)
-        env:
-          REPOSITORY_IMAGE: ${{ vars.REPOSITORY_IMAGE }}
-        run: |
-          syft ${REPOSITORY_IMAGE} \
-            --exclude '/app/**' \
-            --output cyclonedx-json=container-sbom.json
-
       - name: Checkout matching git tag if available
         id: checkout-tag
         env:
@@ -135,65 +105,52 @@ jobs:
             echo "No matching git tag found, staying on original ref"
           fi
 
-      - name: Generate SBOM for source code (npm deps from lockfile)
-        run: |
-          syft dir:. \
-            --output cyclonedx-json=source-sbom.json
+      # Source SBOM (at the matching git tag, if any) + the image's OS packages
+      # -> Dependency-Track as gitea-latest, then the image and osv-scanner.toml
+      # decisions -> dtrack-panel.
+      - name: SBOM + triage report (gitea-latest)
+        uses: https://git.janhouse.lv/janhouse/sbom-tools-action/scan@v2
+        with:
+          project: ${{ secrets.DEPENDENCY_TRACK_PROJECT_NAME }}
+          project-version: gitea-latest
+          images: git.janhouse.lv/janhouse/traefik-proxy-admin
+          container-image: ${{ vars.REPOSITORY_IMAGE }}
+          container-skip-files: '/app/**'
+          dtrack-url: ${{ secrets.DEPENDENCY_TRACK_URL }}
+          dtrack-api-key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
 
       - name: Restore original git ref
         if: ${{ steps.checkout-tag.outputs.checked_out_tag != '' }}
         run: |
           git checkout ${{ steps.checkout-tag.outputs.original_ref }}
 
-      - name: Merge SBOMs
-        run: |
-          cyclonedx-cli merge \
-            --input-files container-sbom.json source-sbom.json \
-            --output-file merged-sbom.json \
-            --output-format json
-
-      - name: Determine version tag
-        id: version
-        run: |
-          VERSION=$(git describe --exact-match --tags 2>/dev/null || git rev-parse --short HEAD)
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version tag: ${VERSION}"
-
-      - name: Upload SBOM to DependencyTrack (all versions)
+      - name: Upload SBOM for the other versions (github-latest, custom tags)
+        if: ${{ steps.metadata.outputs.pushed_to_github == 'true' || steps.metadata.outputs.custom_tags != '' }}
         env:
           DTRACK_URL: ${{ secrets.DEPENDENCY_TRACK_URL }}
           DTRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
           PROJECT_NAME: ${{ secrets.DEPENDENCY_TRACK_PROJECT_NAME }}
           PUSHED_TO_GITHUB: ${{ steps.metadata.outputs.pushed_to_github }}
           CUSTOM_TAGS: ${{ steps.metadata.outputs.custom_tags }}
-          GIT_TAG: ${{ steps.version.outputs.version }}
         run: |
+          # The action uploaded gitea-latest; the same merged SBOM (sbom.json,
+          # left in the workspace by the action) goes to the other versions.
+          set -euo pipefail
+          GIT_TAG=$(git describe --exact-match --tags 2>/dev/null || git rev-parse --short HEAD)
           upload_sbom() {
             local VERSION=$1
             echo "Uploading SBOM for version: ${VERSION}"
-
-            BOM_BASE64=$(base64 -w 0 merged-sbom.json)
-            cat > payload.json << EOF
-          {
-            "projectName": "${PROJECT_NAME}",
-            "projectVersion": "${VERSION}",
-            "autoCreate": true,
-            "projectTags": [{"name": "${GIT_TAG}"}],
-            "bom": "${BOM_BASE64}"
-          }
-          EOF
-
-            curl -X PUT "${DTRACK_URL}/api/v1/bom" \
+            jq -n --arg n "$PROJECT_NAME" --arg v "$VERSION" --arg t "$GIT_TAG" \
+              --rawfile bom <(base64 -w0 sbom.json) \
+              '{projectName: $n, projectVersion: $v, autoCreate: true,
+                projectTags: [{name: $t}], bom: $bom}' > payload.json
+            curl -fsS -X PUT "${DTRACK_URL%/}/api/v1/bom" \
               -H "X-Api-Key: ${DTRACK_API_KEY}" \
               -H "Content-Type: application/json" \
-              -d @payload.json
-
+              --data-binary @payload.json
             rm payload.json
             echo ""
           }
-
-          # Always upload gitea-latest
-          upload_sbom "gitea-latest"
 
           # Upload github-latest if pushed to GitHub
           if [ "${PUSHED_TO_GITHUB}" = "true" ]; then
