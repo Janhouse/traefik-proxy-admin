@@ -1,4 +1,6 @@
 FROM node:24-alpine AS base
+# Upgrade the base image's OS packages so rebuilds pick up security fixes.
+RUN apk upgrade --no-cache
 RUN apk add --update --no-cache git wget \
   && rm -rf /var/cache/apk/*
 

@@ -13,11 +13,20 @@ on:
         description: 'Custom tags for the image (comma-separated, e.g., v1.2,v1.2.1)'
         required: false
         type: string
+  # Weekly rebuild so the image picks up base-image and OS package security
+  # updates. Scheduled runs push only to the Gitea registry (no GHCR/custom tags).
+  schedule:
+    - cron: '10 3 * * 6'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Weekly rebuild: drop the build cache first, so the image's
+      # `apk/apt upgrade` layer really re-runs (a cached one installs nothing).
+      - name: Clear the build cache (weekly rebuild)
+        if: github.event_name == 'schedule'
+        run: docker builder prune -af
       - name: Check out repository code
         uses: actions/checkout@v3
       - name: Build image
